@@ -1,0 +1,502 @@
+from typing import Dict, List, Optional, Union
+import os
+import torch
+import numpy as np
+
+from opencompass.models.base import BaseModel, LMTemplateParser
+from opencompass.models.base_api import APITemplateParser
+from opencompass.registry import MODELS
+from opencompass.utils.logging import get_logger
+from opencompass.utils.prompt import PromptList
+##use dream generation utils
+
+PromptList = List[Dict[str, str]]
+PromptType = Union[PromptList, str]
+
+
+def _get_meta_template(meta_template):
+    default_meta_template = dict(
+        round=[
+            dict(role='HUMAN', api_role='HUMAN'),
+            # XXX: all system roles are mapped to human in purpose
+            dict(role='BOT', api_role='BOT', generate=True),
+        ],
+        reserved_roles=[dict(role='SYSTEM', api_role='SYSTEM')]
+    )
+    return APITemplateParser(meta_template or default_meta_template)
+
+
+@MODELS.register_module()
+class DreamModel(BaseModel):
+    """Model wrapper around LLaDA model.
+
+    Args:
+        path (str): The name or path to LLaDA model.
+        hf_cache_dir: Set the cache dir to HF model cache dir. If None, it will
+            use the env variable HF_MODEL_HUB. Defaults to None.
+        max_seq_len (int): The maximum length of the input sequence. Defaults
+            to 2048.
+        tokenizer_path (str): The path to the tokenizer. Defaults to None.
+        tokenizer_kwargs (dict): Keyword arguments for the tokenizer.
+            Defaults to {}.
+        peft_path (str, optional): The name or path to the HuggingFace's PEFT
+            model. If None, the original model will not be converted to PEFT.
+            Defaults to None.
+        tokenizer_only (bool): If True, only the tokenizer will be initialized.
+            Defaults to False.
+        model_kwargs (dict): Keyword arguments for the model, used in loader.
+            Defaults to dict(device_map='auto').
+        meta_template (Dict, optional): The model's meta prompt
+            template if needed, in case the requirement of injecting or
+            wrapping of any meta instructions.
+        extract_pred_after_decode (bool): Whether to extract the prediction
+            string from the decoded output string, instead of extract the
+            prediction tokens before decoding. Defaults to False.
+        batch_padding (bool): If False, inference with be performed in for-loop
+            without batch padding.
+        pad_token_id (int): The id of the padding token. Defaults to None. Use
+            (#vocab + pad_token_id) if get negative value.
+        mode (str, optional): The method of input truncation when input length
+            exceeds max_seq_len. 'mid' represents the part of input to
+            truncate. Defaults to 'none'.
+        use_fastchat_template (str, optional): Whether to use fastchat to get
+            the conversation template. If True, fastchat needs to be
+            implemented first. Defaults to False.
+        end_str (str, optional): Whether to trim generated strings with end_str
+            if the model has special ending strings that are not handled well.
+            Defaults to None.
+
+    Note:
+        About ``extract_pred_after_decode``: Commonly, we should extract the
+        the prediction tokens before decoding. But for some tokenizers using
+        ``sentencepiece``, like LLaMA,  this behavior may change the number of
+        whitespaces, which is harmful for Python programming tasks.
+    """
+    def __init__(
+        self,
+        path: str,
+        hf_cache_dir: Optional[str] = None,
+        max_seq_len: int = 2048,
+        tokenizer_path: Optional[str] = None,
+        tokenizer_kwargs: dict = dict(),
+        peft_path: Optional[str] = None,
+        tokenizer_only: bool = False,
+        model_kwargs: dict = dict(device_map='auto'),
+        generation_kwargs: dict = dict(),
+        meta_template: Optional[Dict] = None,
+        extract_pred_after_decode: bool = False,
+        batch_padding: bool = False,
+        pad_token_id: Optional[int] = None,
+        mode: str = 'none',
+        use_fastchat_template: bool = False,
+        end_str: Optional[str] = None,
+        stop_words: Optional[List[str]] = None,
+        mask_id = 151666, # The token id of [MASK] is 151666.
+        padding_id = 151643, # The token id of <pad> is 151643.
+        gen_steps: int = 512,
+        gen_length: int = 512,
+        batch_size_: int = 1,
+        temperature: float = 0.0, 
+        top_p: float = 0.9,
+        top_k: Optional[int] = None,
+        alg: str = 'origin',
+        alg_temp: Optional[float] = None,
+    ) -> None:
+        super().__init__(path=path,
+                         max_seq_len=max_seq_len,
+                         tokenizer_only=tokenizer_only,
+                         meta_template=meta_template)
+        if hf_cache_dir is None:
+            hf_cache_dir = os.getenv('HF_MODEL_HUB', None)
+        self.logger = get_logger()
+        self.pad_token_id = pad_token_id
+        assert mode in ['none', 'mid']
+        self.mode = mode
+        self._load_tokenizer(path=path,
+                             tokenizer_path=tokenizer_path,
+                             tokenizer_kwargs=tokenizer_kwargs)
+        self.batch_padding = batch_padding
+        self.extract_pred_after_decode = extract_pred_after_decode
+        if not tokenizer_only:
+            self._load_model(path=path,
+                             model_kwargs=model_kwargs,
+                             peft_path=peft_path)
+        self.generation_kwargs = generation_kwargs or {}
+        self.use_fastchat_template = use_fastchat_template
+        self.end_str = end_str
+        self.stop_words = set(stop_words or [])
+        self.padding_id = padding_id
+        self.mask_id = mask_id
+
+        ##Todo: modify input
+        self.batch_size = batch_size_
+        self.gen_steps = gen_steps
+        self.gen_length = gen_length
+        self.temperature = temperature
+        self.top_p = top_p
+        self.top_k = top_k
+        self.alg = alg
+        self.alg_temp = alg_temp
+
+        self.template_parser = _get_meta_template(meta_template)
+
+    def _load_tokenizer(self, path: str, tokenizer_path: Optional[str],
+                        tokenizer_kwargs: dict):
+        from transformers import AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_path if tokenizer_path else path, trust_remote_code=True, **tokenizer_kwargs)
+
+        # A patch for some models without pad_token_id
+        if self.pad_token_id is not None:
+            if self.pad_token_id < 0:
+                self.pad_token_id += self.tokenizer.vocab_size
+            if self.tokenizer.pad_token_id is None:
+                self.logger.debug(f'Using {self.pad_token_id} as pad_token_id')
+            elif self.tokenizer.pad_token_id != self.pad_token_id:
+                self.logger.warning(
+                    'pad_token_id is not consistent with the tokenizer. Using '
+                    f'{self.pad_token_id} as pad_token_id')
+            self.tokenizer.pad_token_id = self.pad_token_id
+        elif self.tokenizer.pad_token_id is None:
+            self.logger.warning('pad_token_id is not set for the tokenizer.')
+            if self.tokenizer.eos_token is not None:
+                self.logger.warning(
+                    f'Using eos_token_id {self.tokenizer.eos_token} '
+                    'as pad_token_id.')
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+
+    def _set_model_kwargs_torch_dtype(self, model_kwargs):
+        if 'torch_dtype' not in model_kwargs:
+            torch_dtype = torch.bfloat16
+        else:
+            torch_dtype = {
+                'torch.float16': torch.float16,
+                'torch.bfloat16': torch.bfloat16,
+                'torch.float': torch.float,
+                'auto': 'auto',
+                'None': None
+            }.get(model_kwargs['torch_dtype'])
+        self.logger.debug(f'HF using torch_dtype: {torch_dtype}')
+        if torch_dtype is not None:
+            model_kwargs['torch_dtype'] = torch_dtype
+
+    def _load_model(self,
+                    path: str,
+                    model_kwargs: dict,
+                    peft_path: Optional[str] = None):
+        from transformers import AutoModel, AutoModelForCausalLM
+        self._set_model_kwargs_torch_dtype(model_kwargs)
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                path, **model_kwargs)
+        except ValueError:
+            self.model = AutoModel.from_pretrained(path, **model_kwargs)
+
+        if peft_path is not None:
+            from peft import PeftModel
+            self.model = PeftModel.from_pretrained(self.model,
+                                                   peft_path,
+                                                   is_trainable=False)
+        self.model.eval()
+
+        if hasattr(self.model, "generation_config"):
+            self.model.generation_config.do_sample = False
+
+        if getattr(self.model.config, "pad_token_id", None) is None and self.tokenizer.pad_token_id is not None:
+            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+
+    def _get_loglikelihood(self, inputs: str, conts: str) -> float:
+        """Get loglikelihood scores given input string and continuation string.
+
+        Args:
+            inputs (str): string.
+            conts (str): strings: slices after the space.
+        Returns:
+            float: loglikelihood scores.
+        """
+        input_tokenizer_out = self.tokenizer(inputs,
+                                             padding=True,
+                                             truncation=False,
+                                             return_length=True,
+                                             return_tensors='pt').to(
+                                                 self.model.device)
+
+        input_ids = input_tokenizer_out['input_ids'][:, :self.max_seq_len]
+        input_length = input_tokenizer_out['length']
+        context_ids = [
+            self.tokenizer(inputs[i].replace(conts[i], ''),
+                           padding=False,
+                           truncation=True,
+                           max_length=self.max_seq_len)['input_ids']
+            for i in range(len(inputs))
+        ]
+        # forward
+        outputs = self.model(input_ids)['logits']
+        outputs = torch.nn.functional.log_softmax(outputs, dim=-1)
+        # calculate loglikelihood
+        answer = np.zeros(len(inputs))
+        for i in range(len(inputs)):
+            if self.tokenizer.padding_side == 'right':
+                cont_ids = input_ids[i, len(context_ids[i]):input_length[i]]
+                logits = outputs[i,
+                                 len(context_ids[i]) - 1:input_length[i] -
+                                 1, :]  # noqa
+            else:
+                cont_ids = input_ids[i, len(context_ids[i]) - input_length[i]:]
+                logits = outputs[i,
+                                 len(context_ids[i]) - input_length[i] - 1:-1]
+            # Reducing the dimension will lead to a wrong outcome
+            logits_gather = torch.gather(
+                logits.unsqueeze(0), 2,
+                cont_ids.unsqueeze(0).unsqueeze(-1))  # [1, seq]
+            # Answer: sum the likelihood of each token in continuation
+            answer[i] = float(logits_gather.detach().cpu().sum())
+        return answer
+
+    def get_mink_percent(self, inputs: List[str], k: int = 20) -> List[float]:
+        """https://swj0419.github.io/detect-pretrain.github.io/"""
+
+        if self.batch_padding and len(inputs) > 1:
+            assert self.tokenizer.pad_token
+            return self._get_mink_percent(inputs, k=k)
+        else:
+            return np.concatenate([
+                self._get_mink_percent(inputs=[text], k=k) for text in inputs
+            ])
+
+    def _get_mink_percent(self, inputs: List[str], k: int = 20) -> List[float]:
+        outputs, inputs = self.get_logits(inputs)
+        shift_logits = outputs[:, :-1, :].contiguous().float()
+        shift_labels = inputs['tokens']['input_ids'][:, 1:].contiguous()
+
+        loss_fct = torch.nn.CrossEntropyLoss(
+            reduction='none', ignore_index=self.tokenizer.pad_token_id)
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
+                        shift_labels.view(-1)).view(shift_labels.size())
+        lens = (inputs['tokens']['input_ids'] !=
+                self.tokenizer.pad_token_id).sum(-1).cpu().numpy()
+        mink_percent = []
+        for nloss, nlen in zip(loss, lens):
+            nlen = int(nlen)
+            minklen = max(nlen * k // 100, 1)
+            nloss = torch.topk(loss[-nlen:], minklen, dim=-1)[0]
+            nloss = -nloss.float().mean().cpu().detach().numpy()
+            mink_percent.append(nloss)
+        return np.array(mink_percent)
+        
+    def get_token_len(self, prompt: str) -> int:
+        """Get lengths of the tokenized strings.
+
+        Args:
+            prompt (str): Input string.
+
+        Returns:
+            int: Length of the input tokens
+        """
+        return len(self.tokenizer.encode(prompt))
+
+    @torch.inference_mode()
+    def generate(self, inputs: List[str], max_out_len: int) -> List[str]:
+        """Generate results given a list of inputs. """
+        messages = _convert_chat_messages(inputs)
+        prompts = [
+            self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False)
+            for m in messages
+        ]
+        print('steps:', self.gen_steps, 'length:', self.gen_length)
+        print('temperature:', self.temperature)
+        print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
+        print('final prompt:', prompts)
+        self.tokenizer.padding_side = "left"
+        enc = self.tokenizer(prompts, padding=True, truncation=False, return_tensors="pt")
+        input_ids = enc["input_ids"].to(self.model.device)
+        attention_mask = enc.get("attention_mask", None)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.model.device)
+
+        gen_kwargs = dict(
+            temperature=self.temperature,
+            top_p=self.top_p,
+            steps=self.gen_steps,
+            max_new_tokens=self.gen_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=getattr(self.tokenizer, "eos_token_id", None),
+            alg=self.alg,
+            alg_temp=self.alg_temp
+        )
+        gen_kwargs.update(self.generation_kwargs)
+
+        outputs = self.model.diffusion_generate(
+            inputs=input_ids,
+            attention_mask=attention_mask,
+            **gen_kwargs,
+        )
+
+        input_lens = attention_mask.sum(-1).tolist() if attention_mask is not None else [input_ids.shape[1]] * input_ids.shape[0]
+        responses = []
+        for i, out_ids in enumerate(outputs):
+            new_tokens = out_ids[input_lens[i]:]
+            text = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+            # stop words clip
+            for sw in self.stop_words:
+                if sw in text:
+                    text = text.split(sw)[0]
+                    break
+            # end_str clip
+            if self.end_str and self.end_str in text:
+                text = text.split(self.end_str)[0]
+            responses.append(text)
+        return responses
+    
+    def get_ppl(self,
+                inputs: List[str],
+                mask_length: Optional[List[int]] = None) -> List[float]:
+        """Get perplexity scores given a list of inputs.
+
+        Args:
+            inputs (List[str]): A list of strings.
+            mask_length (Optional[List[int]]): A list of mask lengths. If
+                provided, the perplexity scores will be calculated with the
+                first mask_length[i] tokens masked out. It's okay to skip
+                its implementation if advanced features in PPLInfernecer is
+                not needed.
+
+        Returns:
+            List[float]: A list of perplexity scores.
+        """
+        raise NotImplementedError('Please use `lmeval` toolkit instead.')
+
+        if self.batch_padding and len(inputs) > 1:
+            assert self.tokenizer.pad_token
+            return self._get_ppl(inputs, mask_length=mask_length)
+        else:
+            if mask_length is not None:
+                print('_______')
+                return np.concatenate([
+                    self._get_ppl(inputs=[text],
+                                         mask_length=[mask_length[idx]])
+                    for idx, text in enumerate(inputs)
+                ])
+            return np.concatenate([
+                self._get_ppl(inputs=[text], mask_length=mask_length)
+                for text in inputs
+            ])
+
+    def get_loglikelihood(self, inputs: List[str], conts:  List[str]) -> List[float]:
+        print('inputs:', inputs, 'conts:', conts)
+        mask_length = [self.get_token_len(c, add_special_tokens=False) for c in conts]
+        return - self.get_ppl(inputs, mask_length)
+    
+    def get_logits(self, inputs, prompt_index):
+        if self.cfg > 0.:
+            assert len(prompt_index) == inputs.shape[1]
+            prompt_index = prompt_index.unsqueeze(0).repeat(inputs.shape[0], 1)
+            un_inputs = inputs.clone()
+            un_inputs[prompt_index] = self.mask_id
+            inputs = torch.cat([inputs, un_inputs])
+
+        logits = self.model(inputs).logits
+
+        if self.cfg > 0.:
+            logits, un_logits = torch.chunk(logits, 2, dim=0)
+            logits = un_logits + (self.cfg + 1) * (logits - un_logits)
+        return logits[:, :inputs.shape[1]]
+
+
+
+def _convert_chat_messages(inputs, merge_role=True, skip_empty_prompt=True):
+    outputs = []
+    for _input in inputs:
+        messages = []
+        if isinstance(_input, str):
+            messages.append({'role': 'user', 'content': _input})
+        else:
+            for item in _input:
+                if skip_empty_prompt and not item['prompt']:
+                    continue
+                role = {
+                    'HUMAN': 'user',
+                    'BOT': 'assistant',
+                    'SYSTEM': 'system',
+                }[item['role']]
+                messages.append({'role': role, 'content': item['prompt']})
+
+        if merge_role:
+            merged_messages = []
+            for item in messages:
+                if merged_messages and merged_messages[-1]['role'] == item['role']:
+                    merged_messages[-1]['content'] += '\n' + item['content']
+                else:
+                    merged_messages.append(item)
+            messages = merged_messages
+        outputs.append(messages)
+    return outputs
+
+
+def _convert_base_messages(inputs):
+    outputs = []
+    for _input in inputs:
+        if isinstance(_input, str):
+            outputs.append(_input)
+        else:
+            messages = []
+            for item in _input:
+                messages.append(item['prompt'])
+            outputs.append(''.join(messages))
+    return outputs
+
+
+class DreamBaseModel(DreamModel):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.template_parser = LMTemplateParser()
+
+    @torch.inference_mode()
+    def generate(self, inputs: List[str], max_out_len: int) -> List[str]:
+        """Generate results given a list of inputs. """
+        messages = _convert_base_messages(inputs)
+        prompt = messages
+        print('steps:', self.gen_steps, 'length:', self.gen_length)
+        print('temperature:', self.temperature)
+        print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
+        print('final prompt:', prompt)
+        self.tokenizer.padding_side = "left"
+        enc = self.tokenizer(prompt, padding=True, truncation=False, return_tensors="pt")
+        input_ids = enc["input_ids"].to(self.model.device)
+        attention_mask = enc.get("attention_mask", None)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.model.device)
+
+        gen_kwargs = dict(
+            temperature=self.temperature,
+            top_p=self.top_p,
+            steps=self.gen_steps,
+            max_new_tokens=self.gen_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=getattr(self.tokenizer, "eos_token_id", None),
+            attention_mask=attention_mask,
+        )
+        gen_kwargs.update(self.generation_kwargs)
+
+        outputs = self.model.diffusion_generate(
+            inputs=input_ids,
+            **gen_kwargs,
+        )
+        input_lens = attention_mask.sum(-1).tolist() if attention_mask is not None else [input_ids.shape[1]] * input_ids.shape[0]
+        responses = []
+        for i, out_ids in enumerate(outputs):
+            new_tokens = out_ids[input_lens[i]:]
+            text = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+            for sw in self.stop_words:
+                if sw in text:
+                    text = text.split(sw)[0]
+                    break
+            if self.end_str and self.end_str in text:
+                text = text.split(self.end_str)[0]
+            responses.append(text)
+        return responses
+    
+    def get_token_len(self, prompt: str, add_special_tokens: bool=True) -> int:
+        m = _convert_base_messages([prompt])[0]
+        t = self.tokenizer(m, add_special_tokens=add_special_tokens)
+        return len(t['input_ids'])
