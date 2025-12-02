@@ -822,3 +822,19 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+    
+    def prepare_inputs_for_generation(
+        self, 
+        input_ids: torch.LongTensor, 
+        past_key_values: Optional[List[Tuple]] = None, 
+        attention_mask: Optional[torch.Tensor] = None,
+        **kwargs
+    ):
+        if past_key_values:
+            # This is because we want the model to only process the last generated token.
+            input_ids = input_ids[:, -1:]
+        model_inputs = {"input_ids": input_ids, "past_key_values": past_key_values, "attention_mask": attention_mask}
+
+        model_inputs.update(kwargs)
+        model_inputs["use_cache"] = kwargs.pop("use_cache", self.config.use_cache)
+        return model_inputs

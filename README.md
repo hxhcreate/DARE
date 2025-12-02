@@ -90,7 +90,7 @@ pip install -r requirements.txt
 pip install flash-attn==2.7.4.post1 --no-build-isolation
 # or 
 # install from whl
-# pip isntall flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# pip install flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 ```
 
 Build evaluation vitual environment:
@@ -287,8 +287,8 @@ If you find our work useful, please consider citing:
 
 We thank the open-source community for their wonderful work and valuable contributions:
 - Models Source: [GSAI-ML](https://huggingface.co/GSAI-ML), [Dream-org](https://huggingface.co/Dream-org), [JetLM](https://huggingface.co/JetLM), [huggingface](https://huggingface.co/) for model supply or hosting
-- Algorithm: [d1](https://github.com/dllm-reasoning/d1), [CJ-GRPO](https://github.com/yjyddq/EOSER-ASS-RL), [MDPO](https://github.com/autonomousvision/mdpo), [Couple-GRPO](https://github.com/apple/ml-diffucoder), [SPG](https://github.com/facebookresearch/SPG)
-- Training Framework: [verl](https://github.com/volcengine/verl), [BGPO](https://github.com/THU-KEG/BGPO)
+- Algorithm: [d1](https://github.com/dllm-reasoning/d1), [CJ-GRPO](https://github.com/yjyddq/EOSER-ASS-RL), [MDPO](https://github.com/autonomousvision/mdpo), [Coupled-GRPO](https://github.com/apple/ml-diffucoder), [SPG](https://github.com/facebookresearch/SPG)
+- Training Framework: [verl](https://github.com/volcengine/verl), [BGPO](https://github.com/THU-KEG/BGPO), [Dream](https://github.com/DreamLM/Dream)
 - Inference Acceleration/Engine: [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM), [lmdeploy](https://github.com/InternLM/lmdeploy)
 - Evaluation Framework: [opencompass](https://github.com/open-compass/opencompass), [LLaDA](https://github.com/ML-GSAI/LLaDA)
 
