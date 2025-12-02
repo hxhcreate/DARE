@@ -38,6 +38,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.micro_batch_size_per_gpu=4 \
     model.partial_pretrain=${model_path} \
     model.trust_remote_code=True \
+    model.fuse_cross_entropy=false \
     +model.attn_implementation="flash_attention_2" \
     +model.fsdp_config.model_dtype=float32 \
     +model.external_lib=transformers_modules.SDAR-4B-Chat \
@@ -45,6 +46,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     trainer.project_name=$project_name \
     trainer.experiment_name=$exp_name \
     trainer.logger=["console","wandb"] \
+    trainer.total_epochs=50 \
     trainer.total_training_steps=1000 \
     ulysses_sequence_parallel_size=1 \
     use_remove_padding=false \
