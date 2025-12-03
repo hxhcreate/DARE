@@ -48,7 +48,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     trainer.total_training_steps=1000 \
     ulysses_sequence_parallel_size=1 \
     use_remove_padding=false \
-    model.lora_rank=32\
+    model.lora_rank=32 \
     model.lora_alpha=16 \
     model.target_modules=all-linear \
     >> ${LOG_DIR}/gsm8k-${TIMESTAMP}.out \
