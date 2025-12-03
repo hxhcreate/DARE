@@ -56,7 +56,7 @@ DARE aims to be both flexible and user-friendly to use with:
   - Support flash_attn_with_kvcache
   - Support sequence_parallel
 - **Comprehensive Evaluation for dLLMs**
-  - Integrate [OpenCompass](https://github.com/open-compass/opencompass) framework with faster inference
+  - Integrate [opencompass](https://github.com/open-compass/opencompass) framework with faster inference
 - **Model Diversity**
   - dLLM that trained from scratch (e.g., LLaDA)
   - dLLM that continuous trained from AR, i.e., AR-to-Diffusion (e.g., Dream, SDAR)

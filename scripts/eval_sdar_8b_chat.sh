@@ -62,8 +62,8 @@ case "${task}" in
     work_dir=outputs/${prefix}sdar_8b_chat_gen_mmlupro_length128
     ;;
   hellaswag)
-    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_hellaswag_length3.py
-    work_dir=outputs/${prefix}sdar_8b_chat_gen_hellaswag_length3
+    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_hellaswag_length128.py
+    work_dir=outputs/${prefix}sdar_8b_chat_gen_hellaswag_length128
     ;;
   arcc)
     py_script=sdar_examples/${prefix}sdar_8b_chat_gen_arcc_length512.py
@@ -74,12 +74,12 @@ case "${task}" in
     work_dir=outputs/${prefix}sdar_8b_chat_gen_gpqa_length128
     ;;
   humaneval)
-    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_humaneval_length768.py
-    work_dir=outputs/${prefix}sdar_8b_chat_gen_humaneval_length768
+    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_humaneval_length512.py
+    work_dir=outputs/${prefix}sdar_8b_chat_gen_humaneval_length512
     ;;
   mbpp)
-    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_mbpp_length1024.py
-    work_dir=outputs/${prefix}sdar_8b_chat_gen_mbpp_length1024
+    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_mbpp_length512.py
+    work_dir=outputs/${prefix}sdar_8b_chat_gen_mbpp_length512
     ;;
   gsm8k)
     py_script=sdar_examples/${prefix}sdar_8b_chat_gen_gsm8k_length256.py
