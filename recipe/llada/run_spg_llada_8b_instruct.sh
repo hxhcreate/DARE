@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-algorithm=${algorithm:-d1}
+algorithm=${algorithm:-spg}
 model=${model:-llada}
 model_path=${model_path:-models/LLaDA-8B-Instruct}
 engine=${engine:-hf}
@@ -141,6 +141,7 @@ val_num_diffusion_steps=$max_response_length
 block_length=32
 mc_num=1
 n_l=1
+logp_estimation="mix"
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
@@ -181,6 +182,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     actor_rollout_ref.actor.entropy_coeff=0.0 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.loss_agg_mode=token-mean \
+    +actor_rollout_ref.actor.logp_estimation=$logp_estimation \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.trust_remote_code=True \
     +actor_rollout_ref.model.attn_implementation="flash_attention_2" \

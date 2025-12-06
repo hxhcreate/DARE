@@ -140,8 +140,8 @@ algorithm="coupled-grpo"
 # diffusion related parameters
 val_num_diffusion_steps=$max_response_length
 block_length=32
-mc_num=16
-n_l=16
+mc_num=1
+n_l=1
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT

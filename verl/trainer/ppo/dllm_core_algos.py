@@ -78,6 +78,43 @@ def compute_policy_loss(
     return pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower
 
 
+def compute_policy_loss_SPG(
+    log_prob_positive,
+    log_prob_negative,
+    advantages,
+    response_mask,
+    loss_agg_mode: str = "token-mean",
+):
+    """
+    Compute the policy objective and related metrics for RL (token-level cross-entropy losses).
+
+    Args:
+        l_theta (Tensor): (batch_size, response_length)
+        advantages (Tensor): (batch_size, response_length)
+        response_mask (Tensor): (batch_size, response_length) 1/0 mask for valid tokens
+        cliprange (float, optional): Clipping parameter ε for standard PPO.
+        cliprange_low (float, optional): Lower clip range for dual-clip PPO. Defaults to same as `cliprange`.
+        cliprange_high (float, optional): Upper clip range for dual-clip PPO. Defaults to same as `cliprange`.
+        clip_ratio_c (float, optional): Lower bound of the ratio for dual-clip PPO. Defaults to 3.0.
+        loss_agg_mode (str, optional): Aggregation mode: 'token-mean', 'sentence-mean', etc.
+    """
+    # Ensure all inputs are tensor format
+    assert isinstance(log_prob_positive, torch.Tensor), f"log_prob_positive must be a tensor, got {type(log_prob_positive)}"
+    assert isinstance(log_prob_negative, torch.Tensor), f"log_prob_negative must be a tensor, got {type(log_prob_negative)}"
+    assert log_prob_positive.shape == log_prob_negative.shape == advantages.shape, f"log_prob_positive, log_prob_negative and advantages must have the same shape, but got {log_prob_positive.shape}, {log_prob_negative.shape} and {advantages.shape}"
+    assert isinstance(advantages, torch.Tensor), f"advantages must be a tensor, got {type(advantages)}"
+    
+    log_prob = torch.where(advantages > 0, log_prob_positive, log_prob_negative) # (batch_size, response_length)
+    
+    pg_losses = - advantages * log_prob
+    
+    pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+    
+
+    # Return the policy loss, clipping ratio, KL divergence and lower bound clipping ratio
+    return pg_loss, None, None, None
+
+
 def kl_penalty(l_theta: torch.FloatTensor, ref_l_theta: torch.FloatTensor, kl_penalty, advantages: torch.FloatTensor) -> torch.FloatTensor:
     """Compute KL divergence given l_theta and ref_l_theta.
     Copied from https://github.com/huggingface/trl/blob/main/trl/trainer/ppo_trainer.py#L1104
@@ -237,10 +274,70 @@ def _forward_process_coupled_grpo(batch, attention_mask, prompt_len, seed=42, MA
     return noisy_batch, mask_indices, p_mask
 
 
-def _forward_process_spg(batch, attention_mask, prompt_len, MASK_TOKEN_ID=126336):
+def _forward_process_spg(batch, attention_mask, prompt_len, seed=42, block_length=32, num_t=1, min_t=0, max_t=1, use_mask_prompt=True, p_mask_prompt=0.15, MASK_TOKEN_ID=126336):
     """
     batch: (batch_size, seq_len) Each data should be the same
     attention_mask: (seq_len,)
     prompt_len: int
     """
-    pass
+    
+    set_seed(seed)
+    
+    b, l = batch.shape
+    gen_length = l - prompt_len
+    assert gen_length % block_length == 0
+    num_blocks = gen_length // block_length
+    completion_mask = attention_mask[prompt_len:].unsqueeze(0)
+    p_mask = torch.zeros((b, num_t, l), device=batch.device)
+
+    
+    completion_num_blocks = (completion_mask.sum(-1)-1)//block_length+1
+    assert num_t <= num_blocks
+    indices = torch.arange(num_blocks, device=batch.device).repeat(b, 1) # [b, num_blocks]
+    for i in range(b):
+        indices[i] = indices[i][torch.randperm(num_blocks)] % completion_num_blocks[i]
+    mask_block_idx = indices[:, :num_t]
+    is_mask = torch.zeros((b, num_t, l), dtype=torch.bool, device=batch.device)
+    block_mask = torch.ones((b, num_t, l), dtype=torch.bool, device=batch.device)
+    for i in range(b):
+        for j in range(num_t):
+            is_mask[i, j, -(num_blocks - mask_block_idx[i, j]) * block_length:] = True
+            if mask_block_idx[i, j] < num_blocks - 1:
+                block_mask[i, j, -(num_blocks - mask_block_idx[i, j] - 1) * block_length:] = False
+    completion_length = completion_mask.sum(-1)
+    is_mask_following = torch.ones((b, num_t, l), dtype=torch.bool, device=batch.device)
+    for i in range(b):
+        for j in range(num_t):
+            mask_length = min(block_length, completion_length[i] - block_length * mask_block_idx[i, j])
+            assert mask_length > 0
+            start_mask_num = max(int(mask_length * min_t), 1)
+            end_mask_num = min(int(mask_length * max_t), mask_length)
+            assert start_mask_num <= end_mask_num
+            mask_num = torch.randint(start_mask_num, end_mask_num + 1, (1, 1), device=batch.device) # [1, 1]
+            
+            # randomly select mask_num tokens to mask for each sequence
+            indices = torch.arange(block_length, device=batch.device).repeat(1, 1, 1) # [1, 1, block_length]
+            is_mask_next = indices < mask_num.unsqueeze(2) # [1, 1, block_length]
+            if mask_block_idx[i, j] == num_blocks - 1 and mask_length == block_length:
+                is_mask_following[i, j, -(num_blocks - mask_block_idx[i, j]) * block_length:] = is_mask_next[0, 0][torch.randperm(block_length)]
+            else:
+                is_mask_following[i, j, -(num_blocks - mask_block_idx[i, j]) * block_length: -(num_blocks - mask_block_idx[i, j]) * block_length + mask_length] = is_mask_next[0, 0, :mask_length][torch.randperm(mask_length)]
+                p_mask[i, j, -(num_blocks - mask_block_idx[i, j]) * block_length: -(num_blocks - mask_block_idx[i, j]) * block_length + mask_length] = float(mask_num) / mask_length
+                p_mask[i, j,-(num_blocks - mask_block_idx[i, j]) * block_length + mask_length: ] = 1
+                
+    completion_mask_append = torch.cat((torch.ones(b, num_t, prompt_len, dtype=torch.bool, device=batch.device), completion_mask.unsqueeze(1).repeat(1, num_t, 1)), dim=2).to(torch.bool)
+    if use_mask_prompt:
+        p_mask = torch.where(~is_mask, p_mask_prompt, p_mask)
+        
+        t_p = torch.ones(b, num_t, device=batch.device) * p_mask_prompt
+        random_matrix = torch.rand((b, num_t, l), device=batch.device)
+        is_mask_prompt = ~is_mask & (random_matrix < t_p.unsqueeze(2))
+        
+        is_mask = is_mask_prompt | (is_mask & is_mask_following) | ~completion_mask_append
+    else:
+        is_mask = (is_mask & is_mask_following) | ~completion_mask_append
+    noisy_batch = torch.where(is_mask, MASK_TOKEN_ID, batch.unsqueeze(1).repeat(1, num_t, 1)) # [b, num_t, l]
+    # noisy_batch, mask_indices, p_mask
+
+
+    return noisy_batch.view(-1, l), is_mask.view(-1, l), p_mask.view(-1, l)

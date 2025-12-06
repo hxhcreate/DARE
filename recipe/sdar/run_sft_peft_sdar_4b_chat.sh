@@ -25,7 +25,7 @@ mkdir -p ${log_dir}
 
 
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
-     -m verl.trainer.dllm_fsdp_sft_trainer \
+     -m verl.trainer.bdllm_fsdp_sft_trainer \
     data.train_files=data/preprocessed/sft/train/gsm8k_train.parquet \
     data.val_files/data/preprocessed/sft/test/gsm8k_test.parquet \
     data.prompt_key=extra_info \

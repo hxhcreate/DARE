@@ -35,6 +35,52 @@ try:
 except ImportError:
     FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = False
 
+### specific for SDAR (Block Diffusion)
+def make_basic_block_attention(
+        N: int,
+        start_pos: int,            # = L0
+        block_size: int,           # = b
+    ) -> torch.Tensor:
+        B = 1
+        L0     = start_pos
+        L1     = (N - L0) // 2          # N = L0 + 2·L1 
+        assert L0 + 2 * L1 == N, "input length must be L0 + 2*L1"
+
+        # all -inf first
+        bias = torch.full((B, 1, N, N), 0)
+
+
+        rows = torch.arange(L0 + L1, L0 + 2 * L1)              # (L1,)
+        rows_token = torch.arange(L0, L0 + L1)              # (L1,)
+
+        # update block by block
+        for bi in range((L1 + block_size - 1) // block_size):
+            #  [bi*b , min((bi+1)*b, L1))
+            left_end   = L0 + min((bi) * block_size, L1)        
+            right_start= L0 + L1 + (left_end - L0)
+
+            i_start = bi * block_size
+            i_end   = min((bi + 1) * block_size, L1)              # no i_end
+
+            block_rows = rows[i_start:i_end]                    
+            bias[:, :, block_rows.unsqueeze(-1), 0:left_end]   = 1
+            bias[:, :, block_rows.unsqueeze(-1), right_start:(right_start + block_size)] = 1
+
+            block_rows = rows_token[i_start:i_end]
+            left_end   = L0 + min((bi + 1) * block_size, L1)
+            bias[:, :, block_rows.unsqueeze(-1), 0:left_end]   = 1
+        
+        if L0 > 0:
+            num_blocks_pre = (L0 + block_size - 1) // block_size
+            for bi in range(num_blocks_pre):
+                # row interval [row_start, row_end)
+                row_end   = max(L0 - bi * block_size, 0)
+                row_start = max(L0 - (bi + 1) * block_size, 0)
+                if row_end > row_start:
+                    block_rows = torch.arange(row_start, row_end)
+                    bias[:, :, block_rows.unsqueeze(-1), 0:row_end] = 1
+        
+        return bias        # (B,1,N,N)
 
 def gather_from_labels(data, label):
     """Gather the label from data. The value in label should be [0, vocab_size)
