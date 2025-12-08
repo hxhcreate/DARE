@@ -206,7 +206,7 @@ If you want to add more benchmarks, models, or custom datasets, please refer to 
 
 DARE is still work in progress. We are considering supporting more models for training and evaluation as soon as possible.
 
-| Model | Parameters | Training Support | Evaluation Support | Inference Acceleration/Engine |
+| Model | Params | Training Support | Evaluation Support | Inference Acceleration |
 |-------|------------|------------------|--------------------|-------------------------------|
 | **LLaDA-8B-Base** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **LLaDA-8B-Instruct** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
