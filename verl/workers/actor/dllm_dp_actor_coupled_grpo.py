@@ -309,7 +309,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             "p_mask": p_mask[:, i:i+1],
                         }
                         entropy, log_prob, loss_per_sample = self._forward_micro_batch(micro_batch=data, temperature=temperature, n_l=1, mc_num=1, calculate_entropy=calculate_entropy, call_fn_name="update_policy")
-                        print(f"\nBGPO loss_per_sample: {loss_per_sample[0, 0, 0]}")
+                        print(f"\nloss_per_sample: {loss_per_sample[0, 0, 0]}")
                         
                         # Compute policy loss
                         pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower = compute_policy_loss(
@@ -323,7 +323,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             clip_ratio_c=clip_ratio_c,
                             loss_agg_mode=loss_agg_mode,
                         )
-                        print(f"BGPO pg_loss: {pg_loss}")
+                        print(f"pg_loss: {pg_loss}")
 
                         if entropy_coeff != 0:
                             entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
@@ -349,7 +349,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                         else:
                             loss = policy_loss / self.gradient_accumulation
                         loss /= self.mc_num
-                        print(f"BGPO loss: {loss}\n")
+                        print(f"loss: {loss}\n")
                         loss.backward()  # Gradient is accumulated in model parameters, but will not be updated now
                         
                         accumulated_pg_loss += pg_loss.detach().item()
