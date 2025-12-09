@@ -167,8 +167,7 @@ def compute_policy_loss(
 
 
 def compute_policy_loss_spg(
-    log_prob_positive,
-    log_prob_negative,
+    log_prob,
     advantages,
     response_mask,
     loss_agg_mode: str = "token-mean",
@@ -187,17 +186,13 @@ def compute_policy_loss_spg(
         loss_agg_mode (str, optional): Aggregation mode: 'token-mean', 'sentence-mean', etc.
     """
     # Ensure all inputs are tensor format
-    assert isinstance(log_prob_positive, torch.Tensor), f"log_prob_positive must be a tensor, got {type(log_prob_positive)}"
-    assert isinstance(log_prob_negative, torch.Tensor), f"log_prob_negative must be a tensor, got {type(log_prob_negative)}"
-    assert log_prob_positive.shape == log_prob_negative.shape == advantages.shape, f"log_prob_positive, log_prob_negative and advantages must have the same shape, but got {log_prob_positive.shape}, {log_prob_negative.shape} and {advantages.shape}"
+    assert isinstance(log_prob, torch.Tensor), f"log_prob_positive must be a tensor, got {type(log_prob)}"
     assert isinstance(advantages, torch.Tensor), f"advantages must be a tensor, got {type(advantages)}"
     
-    log_prob = torch.where(advantages > 0, log_prob_positive, log_prob_negative) # (batch_size, response_length)
+    per_seq_loss = - advantages[:,-1].unsqueeze(0) * log_prob
     
-    pg_losses = - advantages * log_prob
-    
-    pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
-    
+    completion_length = response_mask.sum(dim=1).unsqueeze(0) # [1, batch_size]
+    pg_loss = (per_seq_loss * completion_length).sum() / completion_length.sum() # 
 
     # Return the policy loss, clipping ratio, KL divergence and lower bound clipping ratio
     return pg_loss, None, None, None
