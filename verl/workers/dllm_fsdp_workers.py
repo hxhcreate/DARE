@@ -96,7 +96,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         from torch import optim
         from torch.distributed.fsdp import CPUOffload, MixedPrecision
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq
+        from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoModelForVision2Seq
 
         from verl.utils.model import get_generation_config, print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
@@ -148,7 +148,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():
                 actor_module_class = AutoModelForVision2Seq
             else:
-                actor_module_class = AutoModelForCausalLM
+                actor_module_class = AutoModel # AutoModelForCausalLM
 
             # # LNY: ref model enable quantization
             # bnb_config = None

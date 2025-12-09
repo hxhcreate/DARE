@@ -522,7 +522,7 @@ class DreamFlashAttention(DreamAttention):
         # padding mask（1/0），not 4D bias
         # (bsz, seq_len) 0/1 mask
         # always is_causal=False
-        if is_flash_attn_2_available() and cu_seqlens is not None and self.training:
+        if is_flash_attn_2_available() and cu_seqlens is not None:
             # q, k, v: (batch_size, n_heads, seq_len, head_dim)
             batch_size, n_heads, seq_len, head_dim = query_states.shape
             assert batch_size == 1, "batch_size should be 1"
@@ -550,7 +550,7 @@ class DreamFlashAttention(DreamAttention):
             #     is_causal=False,
             #     dropout=self.attention_dropout if self.training else 0.0,
             # )
-        elif is_flash_attn_2_available() and attention_mask is not None and self.training:
+        elif is_flash_attn_2_available() and attention_mask is not None:
             cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k = self._compute_varlen_params(attention_mask)
             # We need to filter out padding tokens based on attention_mask
             batch_size, n_heads, seq_len, head_dim = query_states.shape
