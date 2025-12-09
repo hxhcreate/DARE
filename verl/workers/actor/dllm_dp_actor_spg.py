@@ -58,7 +58,6 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         self.MASK_TOKEN_ID = actor_module.config.mask_token_id
         self.PAD_TOKEN_ID = actor_module.config.pad_token_id
         self.mc_num = config["mc_num"]  # Number of Monte Carlo samples
-        self.n_l = config["n_l"]  # Number of random masks
         self.cfg_scale = config["cfg_scale"]  # Whether to use CFG
         self.logp_estimation = config["logp_estimation"]
         self.eubo_beta = config.get("eubo_beta", 1.5)
@@ -87,7 +86,6 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         
         # Calculate log_probs
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            # iter_idx是list 怎么取出来
             perturbed_seq = micro_batch["perturbed_seq"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
             mask_indices = micro_batch["mask_indices"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
             p_mask = micro_batch["p_mask"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)  # (bs*num_iterations, mc_num, seq_len)
@@ -138,7 +136,6 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             log_likelihood = loss_per_sample.sum(dim=1) / mc_num  # (batch_size,)
             log_probs = (log_likelihood / response_length).view(-1, 1).repeat(1, response_length)  # (batch_size, response_length)
             
-            # n_y_l * n_l
             per_token_logps = per_token_logps.view(batch_size, num_iterations, mc_num, response_length).transpose(0,1)
             per_token_probs = per_token_probs.view(batch_size, num_iterations, mc_num, response_length).transpose(0,1)
             
@@ -274,7 +271,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
             with torch.no_grad():
-                entropy, per_seq_logps, loss_per_sample_expanded = self._forward_micro_batch(micro_batch, temperature=temperature, n_l=self.n_l, mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
+                entropy, per_seq_logps, loss_per_sample_expanded = self._forward_micro_batch(micro_batch, temperature=temperature, iter_idx=range(self.num_iterations), mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
             
             log_probs_lst.append(per_seq_logps)
             if calculate_entropy:
