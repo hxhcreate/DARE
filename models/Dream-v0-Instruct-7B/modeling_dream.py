@@ -56,6 +56,16 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "Dream-7B"
 _CONFIG_FOR_DOC = "DreamConfig"
 
+class BaseModelOutputWithPast(BaseModelOutput):
+    def __init__(self, last_hidden_state: torch.FloatTensor, hidden_states: Optional[Tuple[torch.FloatTensor]] = None, attentions: Optional[Tuple[torch.FloatTensor]] = None, past_key_values: Optional[Tuple[torch.FloatTensor]] = None):
+        super().__init__(last_hidden_state, hidden_states, attentions)
+        self.past_key_values = past_key_values
+
+
+class MaskedLMOutputWithPastKeyValues(MaskedLMOutput):
+    def __init__(self, past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.past_key_values = past_key_values
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Dream
 class DreamRMSNorm(nn.Module):
@@ -181,7 +191,7 @@ def rotate_half(x):
 
 
 # Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
-def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1, block_end_index: Optional[torch.Tensor] = None):
     """Applies Rotary Position Embedding to the query and key tensors.
 
     Args:
@@ -203,7 +213,14 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
+    # q_embed = (q * cos) + (rotate_half(q) * sin)
+    # k_embed = (k * cos) + (rotate_half(k) * sin)
+    query_len, key_len = q.shape[-2], k.shape[-2]
+
+    if block_end_index is None:
+        q_embed = (q * cos[:, :, key_len - query_len : key_len, :]) + (rotate_half(q) * sin[:, :, key_len - query_len : key_len, :])
+    else:
+        q_embed = (q * cos[:, :, block_end_index.item() - query_len : block_end_index.item(), :]) + (rotate_half(q) * sin[:, :, block_end_index.item() - query_len : block_end_index.item(), :])
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
@@ -361,6 +378,8 @@ class DreamSdpaAttention(DreamAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        dual_cache: Optional[bool] = False,
+        replace_position: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
@@ -383,9 +402,24 @@ class DreamSdpaAttention(DreamAttention):
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
+        if past_key_value is not None:
+            if dual_cache:
+                past_key, past_value = past_key_value
+                replace_indices = replace_position.nonzero(as_tuple=True)[1] 
+                past_key[:, replace_indices] = key_states
+                key_states = past_key
+                past_value[:, replace_indices] = value_states
+                value_states = past_value
+            else:
+                past_key, past_value = past_key_value
+                key_states = torch.cat([past_key, key_states], dim=-2)
+                value_states = torch.cat([past_value, value_states], dim=-2)
+
+        past_key_value = (key_states, value_states) if use_cache else None
+
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         if position_embeddings is None:
             logger.warning_once(
@@ -397,11 +431,16 @@ class DreamSdpaAttention(DreamAttention):
             cos, sin = self.rotary_emb(value_states, position_ids)
         else:
             cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+        if dual_cache:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, block_end_index=replace_indices.max()+1)
+        else:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        # query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        # if past_key_value is not None:
+        #     cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
+        #     key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -454,6 +493,8 @@ class DreamFlashAttention(DreamAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        dual_cache: Optional[bool] = False,
+        replace_position: Optional[torch.Tensor] = None,
         cu_seqlens: Optional[torch.Tensor] = None,
         max_seqlen: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -483,11 +524,26 @@ class DreamFlashAttention(DreamAttention):
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
+        if past_key_value is not None:
+            if dual_cache:
+                past_key, past_value = past_key_value
+                replace_indices = replace_position.nonzero(as_tuple=True)[1] 
+                past_key[:, replace_indices] = key_states
+                key_states = past_key
+                past_value[:, replace_indices] = value_states
+                value_states = past_value
+            else:
+                past_key, past_value = past_key_value
+                key_states = torch.cat([past_key, key_states], dim=-2)
+                value_states = torch.cat([past_value, value_states], dim=-2)
+            
+        past_key_value = (key_states, value_states) if use_cache else None
+
         # (bsz, num_heads, q_len, head_dim)
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         # (bsz, num_kv_heads, q_len, head_dim)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, -1, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         # RoPE
         if position_embeddings is None:
@@ -500,14 +556,19 @@ class DreamFlashAttention(DreamAttention):
             cos, sin = self.rotary_emb(value_states, position_ids)
         else:
             cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        if dual_cache:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, block_end_index=replace_indices.max()+1)
+        else:
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        # query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         # KV cache
-        if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_value.update(
-                key_states, value_states, self.layer_idx, cache_kwargs
-            )
+        # if past_key_value is not None:
+        #     cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+        #     key_states, value_states = past_key_value.update(
+        #         key_states, value_states, self.layer_idx, cache_kwargs
+        #     )
 
         # GQA: repeat KV
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -541,49 +602,7 @@ class DreamFlashAttention(DreamAttention):
                 causal=False
             )
             attn_output= attn_output.unsqueeze(0).transpose(1, 2)
-            # attn_output = _flash_attention_forward(
-            #     query_states,
-            #     key_states,
-            #     value_states,
-            #     attention_mask=None if torch.all(attention_mask) else attention_mask,  # (bsz, q_len) padding mask, 1=keep, 0=pad
-            #     query_length=q_len,
-            #     is_causal=False,
-            #     dropout=self.attention_dropout if self.training else 0.0,
-            # )
-        elif is_flash_attn_2_available() and attention_mask is not None:
-            cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k = self._compute_varlen_params(attention_mask)
-            # We need to filter out padding tokens based on attention_mask
-            batch_size, n_heads, seq_len, head_dim = query_states.shape
-            assert batch_size == 1, "batch_size should be 1"
-            # Create mask for valid tokens
-            valid_mask = attention_mask.bool()  # (batch_size, seq_len)
-            # Transpose to (batch_size, seq_len, n_heads, head_dim) for easier indexing
-            q = query_states.transpose(1, 2)
-            k = key_states.transpose(1, 2)
-            v = value_states.transpose(1, 2)
-            # Use boolean indexing to extract valid tokens
-            q_flat = q[valid_mask]  # (total_valid, n_heads, head_dim)
-            k_flat = k[valid_mask]  # (total_valid, n_heads, head_dim)
-            v_flat = v[valid_mask]  # (total_valid, n_heads, head_dim)
-            
-            r = flash_attn_varlen_func(
-                q_flat, k_flat, v_flat,
-                cu_seqlens_q=cu_seqlens_q,
-                cu_seqlens_k=cu_seqlens_k,
-                max_seqlen_q=max_seqlen_q,
-                max_seqlen_k=max_seqlen_k,
-                dropout_p=self.attention_dropout,
-                causal=False
-            )  # (total_valid, nheads, headdim)
-            # Reconstruct the full tensor with padding using scatter
-            result = torch.zeros_like(q)
-            # Create indices for scatter operation
-            valid_indices = torch.nonzero(valid_mask, as_tuple=False)  # (total_valid, 2) - (batch_idx, seq_idx)
-            # Scatter the results back to their original positions
-            result[valid_indices[:, 0], valid_indices[:, 1]] = r
-            attn_output = result.transpose(1, 2)
-
-        elif is_flash_attn_2_available():
+        elif is_flash_attn_2_available() and attention_mask is None:
             attn_output = flash_attn_func(
                 query_states.transpose(1, 2), key_states.transpose(1, 2), value_states.transpose(1, 2), dropout_p=self.attention_dropout, causal=False
             )  # (batch_size, seqlen, nheads, headdim)
@@ -620,26 +639,6 @@ class DreamFlashAttention(DreamAttention):
         attn_output = self.o_proj(attn_output)
 
         return attn_output, None, past_key_value
-
-    def _compute_varlen_params(self, attention_mask: torch.Tensor) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[int], Optional[int]]:
-        """
-        Compute variable length parameters for flash attention varlen function.
-        Args:
-            attention_mask: Attention mask tensor of shape (batch_size, seq_len)
-        Returns:
-            Tuple of (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k)
-        """
-        # Calculate sequence lengths for each batch
-        seq_lens = attention_mask.sum(dim=-1).to(torch.int32)  # (batch_size,)
-        
-        # Compute cumulative sequence lengths
-        cu_seqlens = torch.cat([
-            torch.zeros(1, device=seq_lens.device),
-            seq_lens.cumsum(dim=0)
-        ]).to(torch.int32)
-        
-        max_seqlen = seq_lens.max().item()
-        return cu_seqlens, cu_seqlens, max_seqlen, max_seqlen
 
 
 class DreamDecoderLayer(nn.Module):
@@ -679,6 +678,8 @@ class DreamDecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        dual_cache: Optional[bool] = False,
+        replace_position: Optional[torch.Tensor] = None,
         cu_seqlens: Optional[torch.Tensor] = None,
         max_seqlen: Optional[int] = None,
         **kwargs,
@@ -709,27 +710,48 @@ class DreamDecoderLayer(nn.Module):
 
         hidden_states = self.input_layernorm(hidden_states)
 
-        if self.config._attn_implementation == "eager":
-            if attention_mask is not None and 0.0 in attention_mask:
-                # shape: (batch_size, 1, 1, seq_len)
-                attention_mask = attention_mask.to(dtype=torch.float).view(attention_mask.shape[0], -1)[:, None, None, :]
-                attention_mask = (1.0 - attention_mask) * torch.finfo(attention_mask.dtype).min
-            else:
-                attention_mask = None
-
         # Self Attention
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            output_attentions=output_attentions,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            position_embeddings=position_embeddings,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
-        )
+        if self.config._attn_implementation == "flash_attention_2":
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                dual_cache=dual_cache,
+                replace_position=replace_position,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
+        elif self.config._attn_implementation == "sdpa":
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                dual_cache=dual_cache,
+                replace_position=replace_position,
+            )
+        elif self.config._attn_implementation == "eager":
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                dual_cache=dual_cache,
+                replace_position=replace_position,
+            )
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -867,6 +889,8 @@ class DreamBaseModel(DreamPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        dual_cache: Optional[bool] = False,
+        replace_position: Optional[torch.Tensor] = None,
         cu_seqlens: Optional[torch.Tensor] = None,
         max_seqlen: Optional[int] = None,
     ) -> Union[Tuple, BaseModelOutput]:
@@ -891,19 +915,28 @@ class DreamBaseModel(DreamPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
         
-        if use_cache and past_key_values is None:
-            past_key_values = DynamicCache()
+        # if use_cache and past_key_values is None:
+        #     past_key_values = DynamicCache()
 
-        if cache_position is None:
-            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
-            )
+        # if cache_position is None:
+        #     past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        #     cache_position = torch.arange(
+        #         past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+        #     )
+        past_seen_tokens = past_key_values[0][0].shape[1] if past_key_values is not None else 0
+        if not dual_cache:
+            position_ids = torch.arange(past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device).unsqueeze(0)
+        else:
+            if past_key_values is not None:
+                position_ids = torch.arange(past_seen_tokens, device=inputs_embeds.device).unsqueeze(0)
+            else:
+                position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device).unsqueeze(0)
 
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+        # if position_ids is None:
+        #     position_ids = cache_position.unsqueeze(0)
 
         hidden_states = inputs_embeds
+        attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = [] if use_cache else None
 
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
@@ -912,34 +945,40 @@ class DreamBaseModel(DreamPreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers:
+        for layer_idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
+
+            layer_past_key_value = past_key_values[layer_idx] if past_key_values is not None else None
 
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
-                    attention_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
-                    cu_seqlens,
-                    max_seqlen,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    past_key_value=layer_past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    cache_position=cache_position,
+                    position_embeddings=position_embeddings,
+                    dual_cache=dual_cache,
+                    replace_position=replace_position,
+                    cu_seqlens=cu_seqlens,
+                    max_seqlen=max_seqlen,
                 )
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
-                    past_key_value=past_key_values,
+                    past_key_value=layer_past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
+                    dual_cache=dual_cache,
+                    replace_position=replace_position,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                 )
@@ -948,6 +987,8 @@ class DreamBaseModel(DreamPreTrainedModel):
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
+            if use_cache:
+                attn_key_values.append(layer_outputs[1])
 
         hidden_states = self.norm(hidden_states)
 
@@ -957,10 +998,11 @@ class DreamBaseModel(DreamPreTrainedModel):
 
         if not return_dict:
             return tuple(v for v in [hidden_states, all_hidden_states, all_self_attns] if v is not None)
-        return BaseModelOutput(
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
+            past_key_values=attn_key_values,
         )
 
 
@@ -1013,6 +1055,8 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
+        dual_cache: Optional[bool] = False,
+        replace_position: Optional[torch.Tensor] = None,
         cu_seqlens: Optional[torch.Tensor] = None,
         max_seqlen: Optional[int] = None,
         **loss_kwargs,
@@ -1035,6 +1079,8 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            dual_cache=dual_cache,
+            replace_position=replace_position,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
@@ -1051,11 +1097,12 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
-        return MaskedLMOutput(
+        return MaskedLMOutputWithPastKeyValues(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            past_key_values=outputs.past_key_values,
         )
     
     def prepare_inputs_for_generation(

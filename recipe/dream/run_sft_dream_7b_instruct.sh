@@ -26,7 +26,7 @@ mkdir -p ${log_dir}
 # compatible with flash attention is still working in progress
 
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
-     -m verl.trainer.dllm_fsdp_sft_trainer \
+     -m verl.trainer.dream_fsdp_sft_trainer \
     data.train_files=data/preprocessed/sft/train/gsm8k_train.parquet \
     data.val_files=data/preprocessed/sft/test/gsm8k_test.parquet \
     data.prompt_key=extra_info \
@@ -39,7 +39,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.micro_batch_size_per_gpu=1 \
     model.partial_pretrain=${model_path} \
     model.trust_remote_code=True \
-    +model.attn_implementation="sdpa" \
+    +model.attn_implementation="flash_attention_2" \
     +model.fsdp_config.model_dtype=float32 \
     +model.external_lib=transformers_modules.Dream-v0-Instruct-7B \
     trainer.default_local_dir=$ckpt_dir \
@@ -49,9 +49,10 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     trainer.total_epochs=20 \
     trainer.total_training_steps=1000 \
     ulysses_sequence_parallel_size=1 \
-    use_remove_padding=false \
-    >> ${log_dir}/gsm8k-${timestamp}.out \
-    2>> ${log_dir}/gsm8k-${timestamp}.err &
+    use_remove_padding=false 
+#     \
+#     >> ${log_dir}/gsm8k-${timestamp}.out \
+#     2>> ${log_dir}/gsm8k-${timestamp}.err &
 
     # Or you can do this:
     # model.target_modules=[q_proj,v_proj] \

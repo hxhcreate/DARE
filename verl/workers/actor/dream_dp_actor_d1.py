@@ -1,3 +1,6 @@
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
+# Copyright 2025 ModelBest Inc. and/or its affiliates
 # Copyright 2025 Shanghai AI Lab
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,6 +38,7 @@ from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs, ulysses_pad
 from verl.workers.actor import DataParallelPPOActor
+from verl.workers.actor.llada_dp_actor_d1 import DLLMDataParallelPPOActor as BaseDataParallelPPOActor
 import torch.nn.functional as F
 
 if is_cuda_available:
@@ -43,13 +47,13 @@ elif is_npu_available:
     from transformers.integrations.npu_flash_attention import index_first_axis, pad_input, rearrange, unpad_input
 
 
-__all__ = ["DataParallelPPOActor"]
+__all__ = ["DataParallelPPOActor", "BaseDataParallelPPOActor"]
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
-class DLLMDataParallelPPOActor(DataParallelPPOActor):
+class DLLMDataParallelPPOActor(BaseDataParallelPPOActor):
     def __init__(self, config, actor_module: nn.Module, actor_optimizer: torch.optim.Optimizer = None):
         """When optimizer is None, it is Reference Policy"""
         super().__init__(config, actor_module, actor_optimizer)
@@ -149,7 +153,9 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             logits = un_logits + (cfg_scale + 1) * (logits - un_logits)  # fusion formula
         else:
             logits = model(packed_input, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen).logits
-        return logits[:, :packed_input.shape[1]]
+        logits = logits[:, :packed_input.shape[1]]
+        shift_logits = torch.cat([logits[:, 0:1], logits[:, :-1]], dim=1).contiguous()
+        return shift_logits
 
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def compute_log_prob(self, data: DataProto, calculate_entropy=False) -> torch.Tensor:
@@ -290,7 +296,8 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                     calculate_entropy = False
                     if entropy_coeff != 0:
                         calculate_entropy = True
-                                        
+
+                    
                     accumulated_pg_loss = 0.0
                     accumulated_pg_clipfrac = 0.0
                     accumulated_ppo_kl = 0.0
@@ -323,7 +330,6 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             clip_ratio_c=clip_ratio_c,
                             loss_agg_mode=loss_agg_mode,
                         )
-                        print(f"pg_loss: {pg_loss}")
 
                         if entropy_coeff != 0:
                             entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)

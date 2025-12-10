@@ -645,27 +645,7 @@ class LLaDABlock(nn.Module):
             ensure_finite_(bias, check_neg_inf=True, check_pos_inf=False)
         return bias
 
-    def _compute_varlen_params(self, attention_mask: torch.Tensor) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[int], Optional[int]]:
-        """
-        Compute variable length parameters for flash attention varlen function.
-        Args:
-            attention_mask: Attention mask tensor of shape (batch_size, seq_len)
-        Returns:
-            Tuple of (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k)
-        """
-        # Calculate sequence lengths for each batch
-        seq_lens = attention_mask.sum(dim=-1).to(torch.int32)  # (batch_size,)
         
-        # Compute cumulative sequence lengths
-        cu_seqlens = torch.cat([
-            torch.zeros(1, device=seq_lens.device),
-            seq_lens.cumsum(dim=0)
-        ]).to(torch.int32)
-        
-        max_seqlen = seq_lens.max().item()
-        return cu_seqlens, cu_seqlens, max_seqlen, max_seqlen
-
-
     def _scaled_dot_product_attention(
         self,
         q: torch.Tensor,
@@ -705,52 +685,6 @@ class LLaDABlock(nn.Module):
             )  # (total_tokens, nheads, headdim)
             return r.unsqueeze(0).transpose(1, 2)
         
-        # Use flash_attn_varlen_func for variable length sequences with attention_mask
-        elif self.config.flash_attention and self.config.flash_attn_varlen and attn_mask is not None and self.training:
-            cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k = self._compute_varlen_params(attn_mask)
-            
-            # q, k, v: (batch_size, n_heads, seq_len, head_dim)
-            # We need to filter out padding tokens based on attention_mask
-            batch_size, n_heads, seq_len, head_dim = q.shape
-            assert batch_size == 1, "batch_size should be 1"
-            # Create mask for valid tokens
-            valid_mask = attn_mask.bool()  # (batch_size, seq_len)
-            
-            # Transpose to (batch_size, seq_len, n_heads, head_dim) for easier indexing
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
-            
-            # Use boolean indexing to extract valid tokens
-            q_flat = q[valid_mask]  # (total_valid, n_heads, head_dim)
-            k_flat = k[valid_mask]  # (total_valid, n_heads, head_dim)
-            v_flat = v[valid_mask]  # (total_valid, n_heads, head_dim)
-            
-            r = self.flash_attn_varlen_func(
-                q_flat, k_flat, v_flat,
-                cu_seqlens_q=cu_seqlens_q,
-                cu_seqlens_k=cu_seqlens_k,
-                max_seqlen_q=max_seqlen_q,
-                max_seqlen_k=max_seqlen_k,
-                dropout_p=dropout_p,
-                causal=False
-            )  # (total_valid, nheads, headdim)
-            for i in range(len(cu_seqlens_q) - 1):
-                start_idx = cu_seqlens_q[i]
-                end_idx = cu_seqlens_q[i + 1]
-                print(f"r[{start_idx}:{end_idx}] sum: {r[start_idx:end_idx].sum()}")
-            
-            # Reconstruct the full tensor with padding using scatter
-            result = torch.zeros_like(q)
-            
-            # Create indices for scatter operation
-            valid_indices = torch.nonzero(valid_mask, as_tuple=False)  # (total_valid, 2) - (batch_idx, seq_idx)
-            
-            # Scatter the results back to their original positions
-            result[valid_indices[:, 0], valid_indices[:, 1]] = r
-            
-            return result.transpose(1, 2)  # (batch_size, n_heads, seq_len, head_dim)
-
         # Use regular flash attention for uniform length sequences
         elif self.config.flash_attention and attn_mask is None:
             r = self.flash_attn_func(
@@ -1424,9 +1358,6 @@ class LLaDAModel(nn.Module):
         # shape: (batch_size, seq_len, d_model)
         x = self.transformer.emb_drop(x)  # type: ignore
 
-        # Save original attention mask for varlen computation
-        original_attention_mask = attention_mask
-
         # Transform the attention mask into what the blocks expect.
         if attention_mask is not None and 0.0 in attention_mask:
             # shape: (batch_size, 1, 1, seq_len)
@@ -1501,15 +1432,11 @@ class LLaDAModel(nn.Module):
                     )
                 ):
                     # shape: (batch_size, seq_len, d_model)
-                    # x, cache = self._activation_checkpoint_fn(
-                    #     block, x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache, replace_position=replace_position, attention_mask=original_attention_mask, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen
-                    # )
                     x, cache = self._activation_checkpoint_fn(
                         block, x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache, replace_position=replace_position, attention_mask=attention_mask, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen
                     )
                 else:
                     # shape: (batch_size, seq_len, d_model)
-                    # x, cache = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache, replace_position=replace_position, attention_mask=original_attention_mask, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
                     x, cache = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache, replace_position=replace_position, attention_mask=attention_mask, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen)
                 if attn_key_values is not None:
                     assert cache is not None

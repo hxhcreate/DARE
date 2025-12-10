@@ -1,3 +1,6 @@
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2023-2024 SGLang Team
+# Copyright 2025 ModelBest Inc. and/or its affiliates
 # Copyright 2025 Shanghai AI Lab
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +29,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 import verl.utils.torch_functional as verl_F
 from verl import DataProto
-from verl.trainer.ppo.dllm_core_algos import agg_loss, compute_policy_loss, kl_penalty  # NOTE: Our core algorithms
+from verl.trainer.ppo.dllm_core_algos import agg_loss, kl_penalty, compute_policy_loss_spg
 from verl.utils.debug import GPUMemoryLogger
 from verl.utils.device import get_device_name, get_torch_device, is_cuda_available, is_npu_available
 from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
@@ -35,6 +38,7 @@ from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs, ulysses_pad
 from verl.workers.actor import DataParallelPPOActor
+from verl.workers.actor.llada_dp_actor_spg import DLLMDataParallelPPOActor as BaseDataParallelPPOActor
 import torch.nn.functional as F
 
 if is_cuda_available:
@@ -43,13 +47,13 @@ elif is_npu_available:
     from transformers.integrations.npu_flash_attention import index_first_axis, pad_input, rearrange, unpad_input
 
 
-__all__ = ["DataParallelPPOActor"]
+__all__ = ["DataParallelPPOActor", "BaseDataParallelPPOActor"]
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
-class DLLMDataParallelPPOActor(DataParallelPPOActor):
+class DLLMDataParallelPPOActor(BaseDataParallelPPOActor):
     def __init__(self, config, actor_module: nn.Module, actor_optimizer: torch.optim.Optimizer = None):
         """When optimizer is None, it is Reference Policy"""
         super().__init__(config, actor_module, actor_optimizer)
@@ -58,10 +62,12 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         self.MASK_TOKEN_ID = actor_module.config.mask_token_id
         self.PAD_TOKEN_ID = actor_module.config.pad_token_id
         self.mc_num = config["mc_num"]  # Number of Monte Carlo samples
-        self.n_l = config["n_l"]  # Number of random masks
         self.cfg_scale = config["cfg_scale"]  # Whether to use CFG
+        self.logp_estimation = config["logp_estimation"]
+        self.eubo_beta = config.get("eubo_beta", 1.5)
+        self.num_iterations = config.get("num_iterations", 1) 
         
-    def _forward_micro_batch(self, micro_batch, temperature, n_l, mc_num, calculate_entropy=False, call_fn_name="") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _forward_micro_batch(self, micro_batch, temperature, iter_idx, mc_num, logp_estimation="eubo", mix_weight=0.5,  calculate_entropy=False, call_fn_name="") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Calculate log_probs and entropy for micro_batch
         Returns:
@@ -74,20 +80,28 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         prompt_length = seq_length - response_length
         device = micro_batch["input_ids"].device
         multi_modal_inputs = {}
+        num_iterations = len(iter_idx)
+        
         if "multi_modal_inputs" in micro_batch:
             # If there are multi-modal inputs, concatenate the content of each key
             for key in micro_batch["multi_modal_inputs"][0].keys():
                 multi_modal_inputs[key] = torch.cat([inputs[key] for inputs in micro_batch["multi_modal_inputs"]], dim=0)
+                
         
         # Calculate log_probs
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            perturbed_seq = micro_batch["perturbed_seq"]  # (bs, mc_num, seq_len)
-            mask_indices = micro_batch["mask_indices"]  # (bs, mc_num, seq_len)
-            p_mask = micro_batch["p_mask"]  # (bs, mc_num, seq_len)
+            perturbed_seq = micro_batch["perturbed_seq"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
+            mask_indices = micro_batch["mask_indices"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
+            p_mask = micro_batch["p_mask"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)  # (bs*num_iterations, mc_num, seq_len)
             seq = micro_batch["input_ids"]  # (bs, seq_len)
             attention_mask = micro_batch["attention_mask"]  # (bs, mc_num, seq_len)
-
-            loss_per_sample = torch.zeros((batch_size, mc_num), device=device)
+            
+            reward_mask = micro_batch["advantages"].any(dim=-1) > 0 # (bs, response_length)
+            
+            loss_per_sample = torch.zeros((batch_size*num_iterations, mc_num), device=device)
+            per_token_logps = torch.zeros((batch_size*num_iterations, mc_num, response_length), device=device) 
+            per_token_probs = torch.zeros((batch_size*num_iterations, mc_num, response_length), device=device)
+            
             for i in range(mc_num):
                 cur_perturbed_seq = perturbed_seq[:, i, :]  # (batch_size, seq_len)
                 cur_mask_indices = mask_indices[:, i, :]
@@ -96,7 +110,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                 packed_perturbed_seq = []
                 cu_seqlens = [0]
                 max_seqlen = 0
-                for b in range(batch_size):
+                for b in range(batch_size*num_iterations):
                     valid_tokens = cur_perturbed_seq[b][attention_mask[b] == 1]
                     packed_perturbed_seq.append(valid_tokens)
                     cu_seqlens.append(cu_seqlens[-1] + len(valid_tokens))
@@ -108,27 +122,89 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                 
                 # Restore logits for each sample
                 loss = torch.zeros(batch_size, device=device)
-                for b in range(batch_size):
+                for b in range(batch_size*num_iterations):
                     start, end = cu_seqlens[b], cu_seqlens[b + 1]
                     
                     logits_b = torch.zeros(seq_length, logits.size(-1), device=device, dtype=logits.dtype)
                     logits_b[attention_mask[b] == 1] = logits[0, start:end]
-                    
+
+                    completion_logits_b = logits_b[-response_length:,:]  # (response_length, vocab_size)
                     mask = cur_mask_indices[b]  # (seq_len,)
+                    
+                    per_token_logps[b, i, :] = -1 * F.cross_entropy(completion_logits_b, seq[b][-response_length:], reduction="none")   # (response_length,)
+                    per_token_probs[b, i, :] = F.softmax(completion_logits_b, dim=-1).gather(dim=-1, index=seq[b][-response_length:].unsqueeze(-1)).squeeze(-1)  # (response_length,)
+                    
                     loss[b] = (F.cross_entropy(logits_b[mask], seq[b][mask], reduction="none") / cur_p_mask[b][mask]).sum()  # cross_entropy returns negative log likelihood
                 loss_per_sample[:, i] = -loss  # convert to log likelihood
 
             log_likelihood = loss_per_sample.sum(dim=1) / mc_num  # (batch_size,)
             log_probs = (log_likelihood / response_length).view(-1, 1).repeat(1, response_length)  # (batch_size, response_length)
-            loss_per_sample = (loss_per_sample / response_length).unsqueeze(-1).expand(-1, -1, response_length).contiguous()
+            
+            per_token_logps = per_token_logps.view(batch_size, num_iterations, mc_num, response_length).transpose(0,1)
+            per_token_probs = per_token_probs.view(batch_size, num_iterations, mc_num, response_length).transpose(0,1)
+            
+            # all_ref_per_token_logps: num_iterations, batch_size, logits_to_keep
+            # perturb_mask: num_iterations*batch_size, logits_to_keep
+            # completion_mask: batch_size, logits_to_keep
+            completion_mask_expanded = attention_mask[:, -response_length:].unsqueeze(0).unsqueeze(2).expand(num_iterations, -1, mc_num, -1)
+            perturb_mask_expanded = mask_indices[:,:, -response_length:].view(batch_size, num_iterations, mc_num, response_length).transpose(0,1)
+            
+            assert per_token_logps.shape == (num_iterations, batch_size, mc_num, response_length), f"per_token_logps.shape: {per_token_logps.shape}"
+            assert completion_mask_expanded.shape == (num_iterations, batch_size, mc_num, response_length), f"completion_mask_expanded.shape: {completion_mask_expanded.shape}"
+            assert perturb_mask_expanded.shape == (num_iterations, batch_size, mc_num, response_length), f"perturb_mask_expanded.shape: {perturb_mask_expanded.shape}"
+            
+            # For perturbed tokens, we should weight over instances (sequence-wise)
+            # num_iterations, batch_size, num_t
         
+            # Check for zero denominators before division
+            denominator = (completion_mask_expanded * perturb_mask_expanded).sum(dim=3)
+            if (denominator == 0).any():
+                print(f"WARNING: Zero denominator detected in per_seq_logps calculation!")
+                print(f"denominator shape: {denominator.shape}")
+                print(f"Zero count: {(denominator == 0).sum()}")
+                print(f"completion_mask_expanded shape: {completion_mask_expanded.shape}")
+                print(f"perturb_mask_expanded shape: {perturb_mask_expanded.shape}")
+                print(f"completion_mask_expanded: {completion_mask_expanded}")
+                print(f"perturb_mask_expanded: {perturb_mask_expanded}")
+                # Add small epsilon to avoid division by zero
+                denominator = torch.clamp(denominator, min=1e-8)
+            
+            per_seq_logps = (per_token_logps * completion_mask_expanded * perturb_mask_expanded).sum(dim=3) / denominator
+            if self.logp_estimation == 'eubo' or self.logp_estimation == 'mix':
+                empirical_t = (completion_mask_expanded * perturb_mask_expanded).sum(dim=3) / completion_mask_expanded.sum(dim=3)
+                empirical_t_expanded = empirical_t.unsqueeze(3).expand(-1, -1, -1, completion_mask_expanded.size(-1))
+                per_token_avg_ps = per_token_probs.pow(self.eubo_beta) * perturb_mask_expanded * completion_mask_expanded / empirical_t_expanded.clamp(min=1e-8)
+                per_token_avg_ps = per_token_avg_ps.mean(dim=2) # [num_iterations, batch_size, logits_to_keep]
+                # set all zero values to 1
+                per_token_avg_ps_dezero = per_token_avg_ps.clone()
+                per_token_avg_ps_dezero[per_token_avg_ps_dezero == 0] = 1
+                loss_mask = (per_token_avg_ps > 0).bool()
+            
+            reward_mask_expanded = reward_mask.unsqueeze(0).expand(num_iterations, -1)
+            per_seq_logps_positive = per_seq_logps.mean(dim=2) # [num_iterations, batch_size]
+            if self.logp_estimation == 'eubo':
+                per_seq_logps_negative = (per_token_avg_ps_dezero.log() * loss_mask).sum(dim=2) / loss_mask.sum(dim=2).clamp(min=1e-8) / self.eubo_beta
+            elif self.logp_estimation == 'mix':
+                per_seq_logps_negative = mix_weight * (per_token_avg_ps_dezero.log() * loss_mask).sum(dim=2) / loss_mask.sum(dim=2).clamp(min=1e-8) / self.eubo_beta + (1-mix_weight) * per_seq_logps.mean(dim=2)
+            elif self.logp_estimation == 'elbo':
+                per_seq_logps_negative = per_seq_logps.mean(dim=2)
+            elif self.logp_estimation == 'zero':
+                per_seq_logps_negative = torch.zeros_like(per_seq_logps_positive)
+            else:
+                raise ValueError(f"self.logp_estimation: {self.logp_estimation} is not supported")
+
+            per_seq_logps = reward_mask_expanded.float() * per_seq_logps_positive + (~reward_mask_expanded).float() * per_seq_logps_negative
+            assert per_seq_logps.shape == (num_iterations, batch_size), f"per_seq_logps.shape: {per_seq_logps.shape}"
+
+
         entropy = None
         if calculate_entropy:
             probs = log_probs.exp()
             entropy = -probs * log_probs  # (bs, response_length) entropy of each token
             
-        return entropy, log_probs, loss_per_sample
-    
+        return entropy, per_seq_logps, loss_per_sample
+
+
     def _get_logits(self, model, packed_input, cu_seqlens, max_seqlen, prompt_len, cfg_scale=0.0, MASK_TOKEN_ID=126336):
         """
         packed_input: (1, total_seqlen)
@@ -149,7 +225,10 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             logits = un_logits + (cfg_scale + 1) * (logits - un_logits)  # fusion formula
         else:
             logits = model(packed_input, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen).logits
-        return logits[:, :packed_input.shape[1]]
+        logits = logits[:, :packed_input.shape[1]]
+        shift_logits = torch.cat([logits[:, 0:1], logits[:, :-1]], dim=1).contiguous()
+        return shift_logits
+    
 
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def compute_log_prob(self, data: DataProto, calculate_entropy=False) -> torch.Tensor:
@@ -194,29 +273,29 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
 
         log_probs_lst = []
         entropy_lst = []
-        loss_per_sample_lst = []
         for micro_batch in micro_batches:
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
             with torch.no_grad():
-                entropy, log_probs, loss_per_sample = self._forward_micro_batch(micro_batch, temperature=temperature, n_l=self.n_l, mc_num=3, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
-            log_probs_lst.append(log_probs)
-            loss_per_sample_lst.append(loss_per_sample)
+                entropy, per_seq_logps, loss_per_sample_expanded = self._forward_micro_batch(micro_batch, temperature=temperature, iter_idx=range(self.num_iterations), mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
+            
+            log_probs_lst.append(per_seq_logps)
             if calculate_entropy:
                 entropy_lst.append(entropy)
 
         log_probs = torch.concat(log_probs_lst, dim=0)
-        loss_per_sample = torch.concat(loss_per_sample_lst, dim=0)
+        
         entropys = None
         if calculate_entropy:
             entropys = torch.concat(entropy_lst, dim=0)
         if use_dynamic_bsz:
             indices = list(itertools.chain.from_iterable(indices))
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
+            
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
-            loss_per_sample = loss_per_sample[revert_indices]
-        return loss_per_sample, entropys  # loss_per_sample is stored in old_log_probs field
+
+        return log_probs, entropys
 
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):
@@ -226,7 +305,8 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
 
-        select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages", "perturbed_seq", "mask_indices", "p_mask"]
+        select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "advantages", "perturbed_seq", "mask_indices", "p_mask"]
+
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
@@ -276,7 +356,6 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                     else:
                         response_mask = attention_mask[:, -response_length:]
 
-                    old_log_prob = data["old_log_probs"]  # (bsz, mc_num)
                     advantages = data["advantages"]
 
                     clip_ratio = self.config.clip_ratio
@@ -291,40 +370,25 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                     if entropy_coeff != 0:
                         calculate_entropy = True
                     
-                    accumulated_pg_loss = 0.0
-                    accumulated_pg_clipfrac = 0.0
-                    accumulated_ppo_kl = 0.0
-                    accumulated_pg_clipfrac_lower = 0.0
+                    avg_loss = 0.0
                     
-                    input_ids = data["input_ids"]
-                    perturbed_seq = data["perturbed_seq"]  # (1, mc_num, seq_len)
-                    mask_indices = data["mask_indices"]
-                    p_mask = data["p_mask"]
-                    mc_num = perturbed_seq.shape[1]
-                    for i in range(mc_num):
-                        data = {
-                            **data,
-                            "perturbed_seq": perturbed_seq[:, i:i+1],
-                            "mask_indices": mask_indices[:, i:i+1],
-                            "p_mask": p_mask[:, i:i+1],
-                        }
-                        entropy, log_prob, loss_per_sample = self._forward_micro_batch(micro_batch=data, temperature=temperature, n_l=1, mc_num=1, calculate_entropy=calculate_entropy, call_fn_name="update_policy")
-                        print(f"\nloss_per_sample: {loss_per_sample[0, 0, 0]}")
-                        
-                        # Compute policy loss
-                        pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower = compute_policy_loss(
-                            old_l_theta=old_log_prob[:, i, :],  # (bsz, response_length)
-                            l_theta=loss_per_sample[:, 0, :],  # (bsz, response_length)
+                    for i in range(self.num_iterations):
+                        entropy, log_prob, _ = self._forward_micro_batch(micro_batch=data, temperature=temperature, 
+                                                                         mc_num=self.mc_num, iter_idx=[i], logp_estimation=self.logp_estimation,
+                                                                         calculate_entropy=calculate_entropy, call_fn_name="update_policy")
+                 
+                    
+                        # use_SPG use RL loss
+                        pg_loss, _, _, _ = compute_policy_loss_spg(
+                            log_prob=log_prob,
                             advantages=advantages,
                             response_mask=response_mask,
-                            cliprange=clip_ratio,
-                            cliprange_low=clip_ratio_low,
-                            cliprange_high=clip_ratio_high,
-                            clip_ratio_c=clip_ratio_c,
                             loss_agg_mode=loss_agg_mode,
                         )
+                        
                         print(f"pg_loss: {pg_loss}")
-
+                        
+                        
                         if entropy_coeff != 0:
                             entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
@@ -336,7 +400,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                         if self.config.use_kl_loss:  # NOTE: Currently not considering KL
                             ref_log_prob = data["ref_log_prob"]
                             # compute kl loss
-                            kld = kl_penalty(l_theta=loss_per_sample[:, 0, :], ref_l_theta=ref_log_prob[:, i, :], kl_penalty=self.config.kl_loss_type, advantages=advantages)
+                            kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type)
                             kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
                             policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
@@ -348,21 +412,20 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             loss = policy_loss * (len(data) / self.config.ppo_mini_batch_size)
                         else:
                             loss = policy_loss / self.gradient_accumulation
-                        loss /= self.mc_num
-                        print(f"loss: {loss}\n")
-                        loss.backward()  # Gradient is accumulated in model parameters, but will not be updated now
                         
-                        accumulated_pg_loss += pg_loss.detach().item()
-                        accumulated_pg_clipfrac += pg_clipfrac.detach().item()
-                        accumulated_ppo_kl += ppo_kl.detach().item()
-                        accumulated_pg_clipfrac_lower += pg_clipfrac_lower.detach().item()
+                        loss.backward()
+                        
+                        avg_loss += loss.detach().item()
 
                     data = {
-                        "actor/pg_loss": accumulated_pg_loss / mc_num,
-                        "actor/pg_clipfrac": accumulated_pg_clipfrac / mc_num,
-                        "actor/ppo_kl": accumulated_ppo_kl / mc_num,
-                        "actor/pg_clipfrac_lower": accumulated_pg_clipfrac_lower / mc_num,
+                        "actor/pg_loss": avg_loss / self.num_iterations,
                     }
+                    # data = {
+                    #     "actor/pg_loss": pg_loss.detach().item(),
+                    #     "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+                    #     "actor/ppo_kl": ppo_kl.detach().item(),
+                    #     "actor/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
+                    # }
                     append_to_dict(metrics, data)
 
                 grad_norm = self._optimizer_step()  # Update gradients after each mini-batch

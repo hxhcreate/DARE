@@ -24,7 +24,7 @@ mkdir -p ${log_dir}
 timestamp=$(date +"%Y%m%d_%H%M%S")
 
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
-     -m verl.trainer.dllm_fsdp_sft_trainer \
+     -m verl.trainer.dream_fsdp_sft_trainer \
     data.train_files=data/preprocessed/sft/train/gsm8k_train.parquet \
     data.val_files=data/preprocessed/sft/test/gsm8k_test.parquet \
     data.prompt_key=extra_info \
@@ -50,9 +50,10 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     use_remove_padding=false \
     model.lora_rank=32 \
     model.lora_alpha=16 \
-    model.target_modules=all-linear \
-    >> ${log_dir}/gsm8k-${timestamp}.out \
-    2>> ${log_dir}/gsm8k-${timestamp}.err &
+    model.target_modules=all-linear 
+#     \
+#     >> ${log_dir}/gsm8k-${timestamp}.out \
+#     2>> ${log_dir}/gsm8k-${timestamp}.err &
 
     # Or you can do this:
     # model.target_modules=[q_proj,v_proj] \

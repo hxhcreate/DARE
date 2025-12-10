@@ -1,4 +1,4 @@
-# Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2025 Shanghai AI Lab
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,7 +56,8 @@ class dLLMSFTDataset(Dataset):
         self.shuffle = config.get("shuffle", False)
         self.seed = config.get("seed")
         self.apply_chat_template_kwargs = config.get("apply_chat_template_kwargs", {})
-        self.mask_token_id = config.get("mask_token_id", 126336)
+        self.mask_token_id = config.get("mask_token_id", 151666)
+        self.eos_token_id = config.get("mask_token_id", 151643)
         self.eval = eval
 
         assert truncation in ["error", "left", "right"]
@@ -148,39 +149,6 @@ class dLLMSFTDataset(Dataset):
     def __len__(self):
         return len(self.prompts)
 
-    def _forward_process(self, input_ids, prompt_length, item, mask_token_id=None, eps=1e-3):
-        """
-        Performs random masking on response part only.
-        Return:
-            noisy_ids
-            t: Tensor(seq_len)
-            labels: Tensor(seq_len)
-        """
-        device = input_ids.device
-        sequence_length = input_ids.shape[0]
-        # ------------------ sample t ------------------
-        if self.eval:
-            t = self.t[item].to(device)
-        else:
-            t = torch.rand((), device=device)
-            t = (1 - eps) * t + eps
-
-        # ------------------ mask indices ------------------
-        mask_indices = (torch.rand((sequence_length,), device=device) < t)
-        # DO NOT mask prompt tokens
-        mask_indices[:prompt_length] = False
-
-        # ------------------ noisy input ------------------
-        noisy_ids = input_ids.clone()
-        noisy_ids[mask_indices] = mask_token_id if mask_token_id is not None else self.mask_token_id
-
-        # ------------------ labels ------------------
-        labels = input_ids.clone()
-        labels[~mask_indices] = -100
-        # prompt labels always ignored
-        labels[:prompt_length] = -100
-        return noisy_ids, t, mask_indices, labels
-
     def __getitem__(self, item):
         tokenizer = self.tokenizer
 
@@ -212,9 +180,7 @@ class dLLMSFTDataset(Dataset):
         # padding to max length
         sequence_length = input_ids.shape[0]
         if sequence_length < self.max_length:
-            # padded_input_ids = torch.ones(size=(self.max_length - sequence_length,), dtype=input_ids.dtype) * self.tokenizer.pad_token_id
-            padded_input_ids = torch.ones(size=(self.max_length - sequence_length,), dtype=input_ids.dtype) * self.tokenizer.eos_token_id
-            # padded_attention_mask = torch.zeros(size=(self.max_length - sequence_length,), dtype=attention_mask.dtype)
+            padded_input_ids = torch.ones(size=(self.max_length - sequence_length,), dtype=input_ids.dtype) * self.tokenizer.pad_token_id
             padded_attention_mask = torch.ones(size=(self.max_length - sequence_length,), dtype=attention_mask.dtype)
 
             input_ids = torch.cat((input_ids, padded_input_ids))
@@ -234,20 +200,14 @@ class dLLMSFTDataset(Dataset):
 
         position_ids = compute_position_id_with_mask(attention_mask)
 
-        # ---- forward_process (random mask here) ----
-        prompt_length = prompt_ids.shape[0]
-        noisy_input_ids, t, mask_indices, labels = self._forward_process(input_ids, prompt_length, item)
-
         loss_mask = attention_mask.clone()
         if prompt_length > 1:
             # mask out prompt for SFT.
-            loss_mask[:prompt_length] = 0
+            loss_mask[: min(prompt_length, loss_mask.size(0))] = 0
 
         return {
-            "input_ids": noisy_input_ids,
+            "input_ids": input_ids,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
             "loss_mask": loss_mask,
-            't': t,
-            'labels': labels,
         }

@@ -160,7 +160,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             #         bnb_4bit_quant_type="nf4",
             #         bnb_4bit_compute_dtype=torch.bfloat16,
             #     )
-                
+
             actor_module = actor_module_class.from_pretrained(
                 pretrained_model_name_or_path=local_path,
                 torch_dtype=torch_dtype,
@@ -331,30 +331,43 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         rollout_name = self.config.rollout.name
         use_cache = self.config.rollout.use_cache
         if rollout_name == "hf":
-            if not use_cache:
-                if self.config.algorithm.name == "cj-grpo":
-                    from verl.workers.rollout.dllm_rollout_cj import DLLMRollout
-                elif self.config.algorithm.name == "mdpo":
-                    from verl.workers.rollout.mdpo_rollout import DLLMRollout
-                else:
-                    from verl.workers.rollout.dllm_rollout import DLLMRollout
-                from verl.workers.sharding_manager.base import BaseShardingManager
+            if self.config.model.name == 'llada':
+                if not use_cache:
+                    if self.config.algorithm.name == "cj-grpo":
+                        from verl.workers.rollout.cj_llada_rollout import DLLMRollout
+                    else:
+                        from verl.workers.rollout.llada_rollout import DLLMRollout
+                    from verl.workers.sharding_manager.base import BaseShardingManager
 
-                rollout = DLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
-                rollout_sharding_manager = BaseShardingManager()
-                # TODO: a sharding manager that do nothing?
-            else:
-                if self.config.algorithm.name == "cj-grpo":
-                    from verl.workers.rollout.fast_cj_dllm_rollout import FASTDLLMRollout
-                elif self.config.algorithm.name == "mdpo":
-                    from verl.workers.rollout.fast_mdpo_rollout import FASTDLLMRollout
+                    rollout = DLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
+                    rollout_sharding_manager = BaseShardingManager()
+                    # TODO: a sharding manager that do nothing?
                 else:
-                    from verl.workers.rollout.fast_dllm_rollout import FASTDLLMRollout
-                from verl.workers.sharding_manager.base import BaseShardingManager
+                    if self.config.algorithm.name == "cj-grpo":
+                        from verl.workers.rollout.fast_cj_llada_rollout import FASTDLLMRollout
+                    else:
+                        from verl.workers.rollout.fast_llada_rollout import FASTDLLMRollout
+                    from verl.workers.sharding_manager.base import BaseShardingManager
 
-                rollout = FASTDLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
-                rollout_sharding_manager = BaseShardingManager()
-                # TODO: a sharding manager that do nothing?
+                    rollout = FASTDLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
+                    rollout_sharding_manager = BaseShardingManager()
+                    # TODO: a sharding manager that do nothing?
+
+            elif self.config.model.name == 'dream':
+                if not use_cache:
+                    from verl.workers.rollout.dream_rollout import DLLMRollout
+                    from verl.workers.sharding_manager.base import BaseShardingManager
+
+                    rollout = DLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
+                    rollout_sharding_manager = BaseShardingManager()
+                    # TODO: a sharding manager that do nothing?
+                else:
+                    from verl.workers.rollout.fast_dream_rollout import FASTDLLMRollout
+                    from verl.workers.sharding_manager.base import BaseShardingManager
+
+                    rollout = FASTDLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
+                    rollout_sharding_manager = BaseShardingManager()
+                    # TODO: a sharding manager that do nothing?
 
         elif rollout_name == "vllm":    # !!! We have not yet adapted dLLM to vllm !!!
             from verl.workers.rollout.vllm_rollout import vllm_mode, vLLMRollout
@@ -474,18 +487,32 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def init_model(self):
-        if self.config.algorithm.name == 'spg':
-            from verl.workers.actor.dllm_dp_actor_spg import DLLMDataParallelPPOActor
-        elif self.config.algorithm.name == 'coupled-grpo':
-            from verl.workers.actor.dllm_dp_actor_coupled_grpo import DLLMDataParallelPPOActor
-        elif self.config.algorithm.name == 'cj-grpo':
-            from verl.workers.actor.dllm_dp_actor_cj_grpo import DLLMDataParallelPPOActor
-        elif self.config.algorithm.name == 'bgpo':
-            from verl.workers.actor.dllm_dp_actor_bgpo import DLLMDataParallelPPOActor
-        elif self.config.algorithm.name == 'd1':
-            from verl.workers.actor.dllm_dp_actor_d1 import DLLMDataParallelPPOActor
-        else:
-            raise NotImplementedError
+        if self.config.model.name == 'llada':
+            if self.config.algorithm.name == 'spg':
+                from verl.workers.actor.llada_dp_actor_spg import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'coupled-grpo':
+                from verl.workers.actor.llada_dp_actor_coupled_grpo import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'cj-grpo':
+                from verl.workers.actor.llada_dp_actor_cj_grpo import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'bgpo':
+                from verl.workers.actor.llada_dp_actor_bgpo import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'd1':
+                from verl.workers.actor.llada_dp_actor_d1 import DLLMDataParallelPPOActor
+            else:
+                raise NotImplementedError
+        elif self.config.model.name == 'dream':
+            if self.config.algorithm.name == 'spg':
+                from verl.workers.actor.dream_dp_actor_spg import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'coupled-grpo':
+                from verl.workers.actor.dream_dp_actor_coupled_grpo import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'cj-grpo':
+                from verl.workers.actor.dream_dp_actor_cj_grpo import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'bgpo':
+                from verl.workers.actor.dream_dp_actor_bgpo import DLLMDataParallelPPOActor
+            elif self.config.algorithm.name == 'd1':
+                from verl.workers.actor.dream_dp_actor_d1 import DLLMDataParallelPPOActor
+            else:
+                raise NotImplementedError
         # This is used to import external_lib into the huggingface systems
         import_external_libs(self.config.model.get("external_lib", None))
 
@@ -728,7 +755,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             batch_size, seq_len = input_ids.shape
             prompt_len = seq_len - response_length  # int
             device = input_ids.device
-            num_iterations = self.config.actor.get("num_iterations", 1)
+            n_y_l = mc_num // n_l  # mc_num: Monte Carlo sampling times
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):            
                 # Generate perturbed_seq, mask_indices, p_mask for each sample in the batch
@@ -743,23 +770,21 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     mc_mask_indices_list = []
                     mc_p_mask_list = []
 
-                    for j in range(num_iterations):
-                        perturbed_seq, mask_indices, p_mask = _forward_process(batch=single_input_id, attention_mask=attention_mask[i],  prompt_len=prompt_len, block_length=block_length, num_t=mc_num, MASK_TOKEN_ID=MASK_TOKEN_ID)  # (mc_num, seq_len)
+                    for j in range(n_y_l):
+                        perturbed_seq, mask_indices, p_mask = _forward_process(batch=single_input_id, attention_mask=attention_mask[i],  prompt_len=prompt_len, block_length=block_length, num_t=n_l, MASK_TOKEN_ID=MASK_TOKEN_ID)  # (n_l, seq_len)
                         assert (mask_indices == (perturbed_seq == MASK_TOKEN_ID)).all()
 
                         mc_perturbed_seq_list.append(perturbed_seq)
                         mc_mask_indices_list.append(mask_indices)
                         mc_p_mask_list.append(p_mask)
-                        
 
-                    all_perturbed_seqs.append(torch.stack(mc_perturbed_seq_list, dim=0))  # (num_iterations, mc_num, seq_len)
-                    all_mask_indices.append(torch.stack(mc_mask_indices_list, dim=0))  # (num_iterations, mc_num, seq_len)
-                    all_p_mask.append(torch.stack(mc_p_mask_list, dim=0))  # (num_iterations, mc_num, seq_len)
+                    all_perturbed_seqs.append(torch.cat(mc_perturbed_seq_list, dim=0))  # (mc_num, seq_len)
+                    all_mask_indices.append(torch.cat(mc_mask_indices_list, dim=0))  # (mc_num, seq_len)
+                    all_p_mask.append(torch.cat(mc_p_mask_list, dim=0))  # (mc_num, seq_len)
 
-                # [num_iterations * batch_size, num_t, seq_len]
-                perturbed_seq = torch.stack(all_perturbed_seqs, dim=0)  # (batch_size, num_iterations, mc_num, seq_len)
-                mask_indices = torch.stack(all_mask_indices, dim=0)  # (batch_size, num_iterations,  mc_num, seq_len)
-                p_mask = torch.stack(all_p_mask, dim=0)  # (batch_size, num_iterations, mc_num, seq_len)
+                perturbed_seq = torch.stack(all_perturbed_seqs, dim=0)  # (batch_size, mc_num, seq_len)
+                mask_indices = torch.stack(all_mask_indices, dim=0)  # (batch_size, mc_num, seq_len)
+                p_mask = torch.stack(all_p_mask, dim=0)  # (batch_size, mc_num, seq_len)
         
         else:
             NotImplementedError(f"Unsupported algorithm: {self.config.algorithm.name} for forward process in DLLMActorRolloutRefWorker")
@@ -801,7 +826,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
-                output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
+                output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
             output = DataProto.from_dict(
                 tensors={"old_log_probs": output, "entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},

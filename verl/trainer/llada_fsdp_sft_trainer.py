@@ -41,7 +41,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, PreTrainedModel
 
 import verl.utils.hdfs_io as hdfs_io
-from verl.utils.dataset.dllm_sft_dataset import dLLMSFTDataset
+from verl.utils.dataset.llada_sft_dataset import dLLMSFTDataset
 # from verl.utils.dataset.multiturn_dllm_sft_dataset import MultiTurndLLMSFTDataset
 from verl.utils.debug import log_gpu_memory_usage
 from verl.utils.distributed import initialize_global_process_group
