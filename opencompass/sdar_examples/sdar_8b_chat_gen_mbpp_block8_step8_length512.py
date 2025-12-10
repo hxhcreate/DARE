@@ -1,20 +1,15 @@
 from mmengine.config import read_base
 with read_base():
-    from ..opencompass.configs.datasets.mmlu_pro.mmlu_pro_gen import \
-        mmlu_pro_datasets
+    from ..opencompass.configs.datasets.mbpp.mbpp_gen import \
+        mbpp_datasets
     from ..opencompass.configs.models.dllm.sdar_8b_chat import \
         models as sdar_8b_chat
-    from ..opencompass.configs.summarizers.groups.mmlu_pro import \
-        mmlu_pro_summary_groups
-datasets = mmlu_pro_datasets
+datasets = mbpp_datasets
 models = sdar_8b_chat
-summarizer = dict(
-    summary_groups=sum([v for k, v in locals().items() if k.endswith('_summary_groups')], []),
-)
 eval_cfg = {
     'gen_length': 512,
-    'block_length': 4,
-    'gen_steps': 4, 
+    'block_length': 8,
+    'gen_steps': 8, 
     'batch_size': 1, 
     'batch_size_': 1,
     'model_kwargs': {
@@ -28,6 +23,7 @@ eval_cfg = {
     'top_p': 1.0,
     'remasking': 'low_confidence_dynamic',
 }
+
 for model in models:
     model.update(eval_cfg)
 from opencompass.partitioners import NumWorkerPartitioner
@@ -36,7 +32,7 @@ from opencompass.tasks import OpenICLInferTask
 infer = dict(
     partitioner=dict(
         type=NumWorkerPartitioner,
-        num_worker=8,  
+        num_worker=8,   
         num_split=None,   
         min_task_size=16, 
     ),

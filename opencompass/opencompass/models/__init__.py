@@ -56,3 +56,6 @@ from .llada import LLaDAModel, LLaDABaseModel # noqa: F401
 from .dream import DreamModel, DreamBaseModel  # noqa: F401
 from .sdar import SDARModel, SDARBaseModel  # noqa: F401
 
+from .llada_moe import LLaDAMoeModel, LLaDAMoeBaseModel
+
+

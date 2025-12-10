@@ -15,12 +15,12 @@ from opencompass.registry import MODELS
 from opencompass.utils.logging import get_logger
 from opencompass.utils.prompt import PromptList
 ##use llada generate
-from .generate import generate as LLaDA_generate
-from .generate import generate_with_prefix_cache as LLaDA_generate_with_prefix_cache
-from .generate import generate_with_dual_cache as LLaDA_generate_with_dual_cache
+from .llada_moe_generate import generate as LLaDA_Moe_generate
 import torch.nn.functional as F
 import numpy as np
 PromptType = Union[PromptList, str]
+
+
 def _get_meta_template(meta_template):
     default_meta_template = dict(
         round=[
@@ -35,7 +35,7 @@ def _get_meta_template(meta_template):
 
 
 @MODELS.register_module()
-class LLaDAModel(BaseModel):
+class LLaDAMoeModel(BaseModel):
     """Model wrapper around LLaDA model.
 
     Args:
@@ -202,17 +202,6 @@ class LLaDAModel(BaseModel):
                         'set pad_token_id via passing '
                         '`pad_token_id={PAD_TOKEN_ID}` in model_cfg.')
 
-        # A patch for llama when batch_padding = True
-        if 'decapoda-research/llama' in path or \
-                (tokenizer_path and
-                 'decapoda-research/llama' in tokenizer_path):
-            self.logger.warning('We set new pad_token_id for LLaMA model')
-            # keep consistent with official LLaMA repo
-            # https://github.com/google/sentencepiece/blob/master/python/sentencepiece_python_module_example.ipynb  # noqa
-            self.tokenizer.bos_token = '<s>'
-            self.tokenizer.eos_token = '</s>'
-            self.tokenizer.pad_token_id = 0
-
     def _set_model_kwargs_torch_dtype(self, model_kwargs):
         if 'torch_dtype' not in model_kwargs:
             torch_dtype = torch.bfloat16
@@ -235,7 +224,7 @@ class LLaDAModel(BaseModel):
         from transformers import AutoModel, AutoModelForCausalLM
 
         self._set_model_kwargs_torch_dtype(model_kwargs)
-        
+                    
         try:
             self.model = AutoModelForCausalLM.from_pretrained(
                 path, trust_remote_code = True,**model_kwargs)
@@ -248,13 +237,9 @@ class LLaDAModel(BaseModel):
                                                    peft_path,
                                                    is_trainable=False)
         self.model.eval()
-        self.model.generation_config.do_sample = False
-
-        # A patch for llama when batch_padding = True
-        if 'decapoda-research/llama' in path:
-            self.model.config.bos_token_id = 1
-            self.model.config.eos_token_id = 2
-            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+        
+        if hasattr(self.model, "generation_config") and self.model.generation_config:
+            self.model.generation_config.do_sample = False
 
 
     def _get_loglikelihood(self, inputs: str, conts: str) -> float:
@@ -359,54 +344,34 @@ class LLaDAModel(BaseModel):
         self.tokenizer.padding_side = "left" 
         prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')
         input_ids = prompt['input_ids'].to(self.model.device)
-        attention_mask = prompt['attention_mask']
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(self.model.device)
         
-        if self.use_cache:
-            if self.dual_cache:
-                x, nfe = LLaDA_generate_with_dual_cache(
-                    model = self.model, 
-                    prompt = input_ids,
-                    attention_mask = attention_mask, 
-                    steps = self.gen_steps, 
-                    gen_length = self.gen_length, 
-                    block_length = self.gen_blocksize, 
-                    temperature = self.temperature, 
-                    remasking = self.remasking, 
-                    mask_id = self.mask_id, 
-                    threshold = self.threshold, 
-                    factor = self.factor
-                )
-            else:
-                x, nfe = LLaDA_generate_with_prefix_cache(
-                    model = self.model, 
-                    prompt = input_ids,
-                    attention_mask = attention_mask,
-                    steps = self.gen_steps, 
-                    gen_length = self.gen_length, 
-                    block_length = self.gen_blocksize, 
-                    temperature = self.temperature, 
-                    remasking = self.remasking, 
-                    mask_id = self.mask_id, 
-                    threshold = self.threshold, 
-                    factor = self.factor
-                )
-        else:
-            x = LLaDA_generate(
-                model = self.model,
-                prompt = input_ids,
-                attention_mask = attention_mask,
-                steps = self.gen_steps,
-                gen_length = self.gen_length,
-                block_length = self.gen_blocksize,
-                temperature = self.temperature,
-                cfg_scale = self.cfg,
-                remasking = self.remasking,
-                mask_id = self.mask_id,
-                confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
-                logits_eos_inf = self.diff_logits_eos_inf,
+        
+        # attention_mask = prompt['attention_mask']
+        # if attention_mask is not None:
+        #     attention_mask = attention_mask.to(self.model.device)
+        
+        
+        # llada_moe hf inference no cache
+        if self.use_cache is not False:  
+            raise AssertionError(
+                "The cache mechanism is not suppotred for LLaDA MoE by default."
             )
+        
+        x = LLaDA_Moe_generate(
+            model = self.model,
+            prompt = input_ids,
+            # attention_mask = attention_mask,
+            steps = self.gen_steps,
+            gen_length = self.gen_length,
+            block_length = self.gen_blocksize,
+            temperature = self.temperature,
+            cfg_scale = self.cfg,
+            remasking = self.remasking,
+            mask_id = self.mask_id,
+            # confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
+            # logits_eos_inf = self.diff_logits_eos_inf,
+        )
+        
         responses = []
         batch_size = input_ids.shape[0]
         
@@ -515,7 +480,7 @@ def  _convert_base_messages(inputs):
             outputs.append(''.join(messages))
     return outputs
 
-class LLaDABaseModel(LLaDAModel):
+class LLaDAMoeBaseModel(LLaDAMoeModel):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.template_parser = LMTemplateParser()
@@ -530,7 +495,7 @@ class LLaDABaseModel(LLaDAModel):
         print('final prompt:', prompt)
         self.tokenizer.padding_side = "left" 
         prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
-        x = LLaDA_generate(
+        x = LLaDA_Moe_generate(
             model = self.model,
             prompt = prompt.to(self.model.device),
             steps = self.gen_steps,
@@ -540,8 +505,8 @@ class LLaDABaseModel(LLaDAModel):
             cfg_scale = self.cfg,
             remasking = self.remasking,
             mask_id = self.mask_id,
-            confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
-            logits_eos_inf = self.diff_logits_eos_inf,
+            # confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
+            # logits_eos_inf = self.diff_logits_eos_inf,
         )
         responses = []
         batch_size = prompt.shape[0]
@@ -570,4 +535,7 @@ class LLaDABaseModel(LLaDAModel):
     
     
     
+
+
+
 

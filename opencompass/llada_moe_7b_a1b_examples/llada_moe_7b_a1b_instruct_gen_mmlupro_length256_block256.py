@@ -2,31 +2,27 @@ from mmengine.config import read_base
 with read_base():
     from ..opencompass.configs.datasets.mmlu_pro.mmlu_pro_gen import \
         mmlu_pro_datasets
-    from ..opencompass.configs.models.dllm.sdar_8b_chat import \
-        models as sdar_8b_chat
+    from ..opencompass.configs.models.dllm.llada_moe_7b_a1b_instruct import \
+        models as llada_moe_7b_a1b_instruct_models
     from ..opencompass.configs.summarizers.groups.mmlu_pro import \
         mmlu_pro_summary_groups
 datasets = mmlu_pro_datasets
-models = sdar_8b_chat
+models = llada_moe_7b_a1b_instruct_models
 summarizer = dict(
     summary_groups=sum([v for k, v in locals().items() if k.endswith('_summary_groups')], []),
 )
 eval_cfg = {
-    'gen_length': 512,
-    'block_length': 4,
-    'gen_steps': 4, 
+    'gen_blocksize': 256, 
+    'gen_length': 256, 
+    'gen_steps': 256, 
     'batch_size': 1, 
     'batch_size_': 1,
     'model_kwargs': {
         'attn_implementation': 'flash_attention_2',  #'sdpa'
         'torch_dtype': 'bfloat16',
         'device_map': 'auto',
-        'trust_remote_code': True,
     },
-    'temperature': 1.0,
-    'top_k': 0, 
-    'top_p': 1.0,
-    'remasking': 'low_confidence_dynamic',
+    'use_cache': False,
 }
 for model in models:
     model.update(eval_cfg)

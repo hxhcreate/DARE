@@ -2,12 +2,14 @@
 set -e
 
 export TORCHDYNAMO_DISABLE=1
-export HF_HOME=
+# export HF_HOME=
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
 export HF_HUB_OFFLINE=1
-export COMPASS_DATA_CACHE=opencompass
-cd opencompass
+# export COMPASS_DATA_CACHE=opencompass
+cd /mnt/shared-storage-user/huxuhao/work/dllm_work/DARE/opencompass
+# cd opencompass
+
 
 # parameter parsing
 while [[ $# -gt 0 ]]; do

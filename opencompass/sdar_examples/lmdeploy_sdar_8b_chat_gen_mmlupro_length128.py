@@ -32,7 +32,7 @@ eval_cfg = {
         'max_new_tokens': 128,
     },
     'max_seq_len': 4096,
-    'max_out_len': 128,
+    'max_out_len': 256,
     'batch_size': 16,
 }
 

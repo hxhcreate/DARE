@@ -6,7 +6,7 @@ export HF_HOME=
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
 export HF_HUB_OFFLINE=1
-export COMPASS_DATA_CACHE=opencompass
+# export COMPASS_DATA_CACHE=opencompass
 cd opencompass
 
 # parameter parsing

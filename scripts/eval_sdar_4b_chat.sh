@@ -6,7 +6,7 @@ export HF_HOME=
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
 export HF_HUB_OFFLINE=1
-export COMPASS_DATA_CACHE=opencompass
+# export COMPASS_DATA_CACHE=opencompass
 cd opencompass
 
 # parameter parsing
@@ -36,7 +36,7 @@ engine=${engine:-hf}
 
 if [ -z "${task}" ]; then
   echo "Usage: bash eval.sh ${task}"
-  echo "Optional task: mmlu, mmlupro, hellaswag, arcc, gsm8k_confidence math_confidence gpqa_confidence humaneval_logits mbpp_confidence gsm8k_short math_short"
+  echo "Optional task: mmlu, mmlupro, hellaswag, arcc, gsm8k_confidence math_confidence gpqa_confidence humaneval_logits mbpp_confidence gsm8k_short math_short olympiadbench"
   exit 1
 fi
 
@@ -96,6 +96,10 @@ case "${task}" in
   aime2025)
     py_script=sdar_examples/${prefix}sdar_4b_chat_gen_aime2025_length2048.py
     work_dir=outputs/${prefix}sdar_4b_chat_gen_aime2025_length2048
+    ;;
+  olympiadbench)
+    py_script=sdar_examples/${prefix}sdar_4b_chat_gen_olympiadbench_length2048.py
+    work_dir=outputs/${prefix}sdar_4b_chat_gen_olympiadbench_length2048
     ;;
   *)
     echo "Unknown task: ${task}"

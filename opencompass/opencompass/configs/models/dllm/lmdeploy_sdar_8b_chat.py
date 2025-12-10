@@ -4,7 +4,7 @@ models = [
     dict(
         type=TurboMindModel,
         abbr='sdar-8b-chat-turbomind',
-        path='/TO/YOUR/PATH',
+        # path='/mnt/shared-storage-user/ai4good1-share/huxuhao/dllm/SDAR-8B-Chat',
         engine_config=dict(
             session_len=8192, max_batch_size=16, tp=1,dtype="float16",
             max_prefill_token_num=4096,
