@@ -139,14 +139,16 @@ train_temperature=0.6
 # diffusion related parameters
 val_num_diffusion_steps=$max_response_length
 block_length=32
-mc_num=1
+mc_num=2
 n_l=1
-logp_estimation="mix"
+logp_estimation="eubo"
+eubo_beta=1.5
+num_iterations=6
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
 baseline="${model}-${task}-${algorithm}-${engine}"
-exp_name="${baseline}-bsz${batch_size}-n${n_rollout}-prompt${max_prompt_length}-response${max_response_length}-step${num_diffusion_steps}-lr${lr}-temp${train_temperature}-n_l${n_l}-mc_num${mc_num}-gpu${n_gpus_per_node}-${timestamp}"
+exp_name="${baseline}-bsz${batch_size}-n${n_rollout}-prompt${max_prompt_length}-response${max_response_length}-step${num_diffusion_steps}-lr${lr}-temp${train_temperature}-n_l${n_l}-mc_num${mc_num}-logp_estimation${logp_estimation}-eubo_beta${eubo_beta}-num_iterations${num_iterations}-gpu${n_gpus_per_node}-${timestamp}"
 ckpt_dir=./ckpts/${project_name}/${exp_name}
 log_dir=./logs/${project_name}/${exp_name}
 mkdir -p ${ckpt_dir}
@@ -183,6 +185,8 @@ python3 -m verl.trainer.dllm_main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.loss_agg_mode=token-mean \
     +actor_rollout_ref.actor.logp_estimation=$logp_estimation \
+    +actor_rollout_ref.actor.eubo_beta=$eubo_beta \
+    +actor_rollout_ref.actor.num_iterations=$num_iterations \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.trust_remote_code=True \
     +actor_rollout_ref.model.attn_implementation="flash_attention_2" \
