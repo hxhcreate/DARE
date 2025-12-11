@@ -215,8 +215,8 @@ DARE is still work in progress. We are considering supporting more models for tr
 | **SDAR-1.7B-Chat** | 1.7B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
 | **SDAR-4B-Chat** | 4B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
 | **SDAR-8B-Chat** | 8B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
-| **LLaDA-MoE** | 7BA1B | - | - | - |
-| **LLaDA2.0-mini** | 16BA1B | - | - | - |
+| **LLaDA-MoE** | 7BA1B | - | ✅ | - |
+| **LLaDA2.0-mini** | 16BA1B | - | ✅ | - |
 
 **TODO...**
 
@@ -239,20 +239,20 @@ DARE is still work in progress. We are considering supporting more models for tr
 
 **Baseline**
 
-| Bench\Model | LLaDA-8B-Instruct | LLaDA-8B-Instruct + Fast-dLLM | Dream-7B-Instruct | SDAR-8B-Chat | SDAR-8B-Chat + lmdeploy |
-|-------|------------|------------------------|-------|------------|------------------------|
-| **MMLU** | 65.24 | 65.17 | 66.83 | 75.40 |  |
-| **MMLU-Pro** | 36.82 | 34.58 | 31.89 |  | 37.56 |
-| **Hellaswag** | 75.30 | 74.41 | 63.23 | 67.67 | 87.59 |
-| **ARC-C** | 87.80 | 87.80 | 81.36 | 69.83 | 86.10 |
-| **GSM8k** | 79.68 | 78.39 | 83.24 | 88.10 | 87.95 |
-| **MATH** | 41.08 | 40.58 | 48.02 | 48.10 | 52.80 |
-| **GPQA** | 30.81 | 31.82 | 26.77 | 28.28 | 36.36 |
-| **AIME24** | 0.83 | 2.08 | 0.83 | 8.75 | 6.67 |
-| **AIME25** | 0.42 | 0.00 | 0.00 | 10.00 | 6.67 |
-| **Olympiad** | 8.95 | 9.70 | 12.22 | 17.81 | 17.35 |
-| **HumanEval** | 46.34 | 43.29 | 78.05 | 73.17 |  |
-| **MBPP** | 38.80 | 20.00 | 56.40 | 53.80 | 55.40 |
+| Bench\Model | LLaDA-8B-Instruct | LLaDA-8B-Instruct + Fast-dLLM | Dream-7B-Instruct | SDAR-8B-Chat | SDAR-8B-Chat + lmdeploy | LLaDA-Moe-7B-A1B-Instruct | LLaDA2.0-Mini|
+|-------|------------|------------------------|-------|------------|------------------------|------------------------|------------|
+| **MMLU** | 65.24 | 65.17 | 66.83 | 75.40 |  | | |
+| **MMLU-Pro** | 36.82 | 34.58 | 31.89 |  | 37.56 | | |
+| **Hellaswag** | 75.30 | 74.41 | 63.23 | 67.67 | 87.59 | | |
+| **ARC-C** | 87.80 | 87.80 | 81.36 | 69.83 | 86.10 | 69.83 | 83.73 |
+| **GSM8k** | 79.68 | 78.39 | 83.24 | 88.10 | 87.95 | | |
+| **MATH** | 41.08 | 40.58 | 48.02 | 48.10 | 52.80 | | |
+| **GPQA** | 30.81 | 31.82 | 26.77 | 28.28 | 36.36 | 34.85 | 34.34 |
+| **AIME24** | 0.83 | 2.08 | 0.83 | 8.75 | 6.67 | | |
+| **AIME25** | 0.42 | 0.00 | 0.00 | 10.00 | 6.67 | | |
+| **Olympiad** | 8.95 | 9.70 | 12.22 | 17.81 | 17.35 | | |
+| **HumanEval** | 46.34 | 43.29 | 78.05 | 73.17 |  | | |
+| **MBPP** | 38.80 | 20.00 | 56.40 | 53.80 | 55.40 |  | |
 
 **TODO...**
 

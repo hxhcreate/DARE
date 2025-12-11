@@ -102,8 +102,8 @@ class LLaDAMoeModel(BaseModel):
                  cfg = 0,
                  temperature = 0.,
                  remasking = 'low_confidence', # 'random'
-                 mask_id = 126336, # The token id of [MASK] is 126336.
-                 padding_id = 126081, # The token id of <pad> is 126081.
+                 mask_id = 156895, # The token id of [MASK] is 126336. in llada-moe
+                 padding_id = 156892, # llada-moe pad token is <|endoftext|>.
                  mc_num = 1,
                  gen_steps = 512,
                  gen_length = 512,
@@ -168,7 +168,6 @@ class LLaDAMoeModel(BaseModel):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             tokenizer_path if tokenizer_path else path, **tokenizer_kwargs)
-
         # A patch for some models without pad_token_id
         if self.pad_token_id is not None:
             if self.pad_token_id < 0:
@@ -375,8 +374,9 @@ class LLaDAMoeModel(BaseModel):
         responses = []
         batch_size = input_ids.shape[0]
         
-        for i in range(batch_size):
-            responses.append(self.tokenizer.decode(x[i, -self.gen_length:], skip_special_tokens=True))
+        resps = self.tokenizer.batch_decode(x[:, -self.gen_length:], skip_special_tokens=True)
+        for resp in resps:
+            responses.append(resp)
         print('--------------------')
         for i in range(batch_size):
             print(f'Response {i}:', responses[i])
@@ -494,7 +494,8 @@ class LLaDAMoeBaseModel(LLaDAMoeModel):
         print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf, 'diff_logits_eos_inf:', self.diff_logits_eos_inf)
         print('final prompt:', prompt)
         self.tokenizer.padding_side = "left" 
-        prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
+        prompt = self.tokenizer.batch_encode_plus(prompt, padding=True, return_tensors='pt')['input_ids']
+        print()
         x = LLaDA_Moe_generate(
             model = self.model,
             prompt = prompt.to(self.model.device),

@@ -1,8 +1,8 @@
-from opencompass.models import LLaDAModel
+from opencompass.models import LLaDA2Model
 
 models = [
     dict(
-        type=LLaDAModel,
+        type=LLaDA2Model,
         abbr='llada2-mini',
         path='/TO/YOUR/PATH',
         max_out_len=1024,

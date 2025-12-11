@@ -100,6 +100,7 @@ def main():
 
     text = generate(model, input_ids, steps=128, gen_length=128, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
     # print(tokenizer.batch_decode(text[:, input_ids.shape[1]:], skip_special_tokens=True)[0])
+    print(f"[DEBUG] raw:\n {text}")
     print(tokenizer.batch_decode(text[:, -128:], skip_special_tokens=True)[0])
 
 
