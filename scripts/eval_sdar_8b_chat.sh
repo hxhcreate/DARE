@@ -115,4 +115,4 @@ echo "Log Dir: ${log_dir}"
 
 python run.py "${py_script}" -w "${work_dir}"  \
 >> "${log_dir}/eval-${task}-${timestamp}.out" \
-2>> "${log_dir}/eval-${task}-${timestamp}.err" 
+2>> "${log_dir}/eval-${task}-${timestamp}.err" &
