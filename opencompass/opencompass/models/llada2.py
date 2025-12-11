@@ -34,8 +34,9 @@ def _get_meta_template(meta_template):
     return APITemplateParser(meta_template or default_meta_template)
 
 
+
 @MODELS.register_module()
-class LLaDAModel(BaseModel):
+class LLaDA2Model(BaseModel):
     """Model wrapper around LLaDA model.
 
     Args:
@@ -102,19 +103,26 @@ class LLaDAModel(BaseModel):
                  cfg = 0,
                  temperature = 0.,
                  remasking = 'low_confidence', # 'random'
-                 mask_id = 126336, # The token id of [MASK] is 126336.
-                 padding_id = 126081, # The token id of <pad> is 126081.
+                 mask_id = 156895, # The token id of [MASK] is 126336. in llada-moe
+                 padding_id = 156892, # llada-moe pad token is <|endoftext|>.
                  mc_num = 1,
-                 gen_steps = 512,
+                 gen_steps = 32,
                  gen_length = 512,
-                 gen_blocksize = 512,
+                 gen_blocksize = 32,
                  batch_size_ = 1,
                  diff_confidence_eos_eot_inf = False,
                  diff_logits_eos_inf = False,
                  use_cache = False,
                  dual_cache = False,
-                 threshold: Optional[float] = None,
+                 threshold: Optional[float] = 0.95,
                  factor: Optional[float] = None,
+                 
+                 top_k: Optional[int] = None,
+                 top_p: Optional[int] = None,
+                 
+                 #llada2.0 special parameters
+                 eos_early_stop: bool = False,
+                 minimal_topk: int = 1
                  ) -> None:
         super().__init__(path=path,
                          max_seq_len=max_seq_len,
@@ -160,6 +168,12 @@ class LLaDAModel(BaseModel):
         self.dual_cache = dual_cache
         self.threshold = threshold
         self.factor = factor
+        
+        # llada2
+        self.eos_early_stop = eos_early_stop
+        self.minimal_topk = minimal_topk
+        self.top_p = top_p
+        self.top_k = top_k
 
         self.template_parser = _get_meta_template(meta_template)
 
@@ -167,8 +181,7 @@ class LLaDAModel(BaseModel):
                         tokenizer_kwargs: dict):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_path if tokenizer_path else path, **tokenizer_kwargs)
-
+            tokenizer_path if tokenizer_path else path, trust_remote_code=True, **tokenizer_kwargs)
         # A patch for some models without pad_token_id
         if self.pad_token_id is not None:
             if self.pad_token_id < 0:
@@ -202,17 +215,6 @@ class LLaDAModel(BaseModel):
                         'set pad_token_id via passing '
                         '`pad_token_id={PAD_TOKEN_ID}` in model_cfg.')
 
-        # A patch for llama when batch_padding = True
-        if 'decapoda-research/llama' in path or \
-                (tokenizer_path and
-                 'decapoda-research/llama' in tokenizer_path):
-            self.logger.warning('We set new pad_token_id for LLaMA model')
-            # keep consistent with official LLaMA repo
-            # https://github.com/google/sentencepiece/blob/master/python/sentencepiece_python_module_example.ipynb  # noqa
-            self.tokenizer.bos_token = '<s>'
-            self.tokenizer.eos_token = '</s>'
-            self.tokenizer.pad_token_id = 0
-
     def _set_model_kwargs_torch_dtype(self, model_kwargs):
         if 'torch_dtype' not in model_kwargs:
             torch_dtype = torch.bfloat16
@@ -235,25 +237,22 @@ class LLaDAModel(BaseModel):
         from transformers import AutoModel, AutoModelForCausalLM
 
         self._set_model_kwargs_torch_dtype(model_kwargs)
+                    
         try:
             self.model = AutoModelForCausalLM.from_pretrained(
-                path, trust_remote_code = True,**model_kwargs)
+                path, trust_remote_code=True, **model_kwargs)
         except ValueError:
-            self.model = AutoModel.from_pretrained(path, **model_kwargs)
-
+            self.model = AutoModel.from_pretrained(path, trust_remote_code=True, **model_kwargs)
+        
         if peft_path is not None:
             from peft import PeftModel
             self.model = PeftModel.from_pretrained(self.model,
                                                    peft_path,
                                                    is_trainable=False)
         self.model.eval()
-        self.model.generation_config.do_sample = False
-
-        # A patch for llama when batch_padding = True
-        if 'decapoda-research/llama' in path:
-            self.model.config.bos_token_id = 1
-            self.model.config.eos_token_id = 2
-            self.model.config.pad_token_id = self.tokenizer.pad_token_id
+        
+        if hasattr(self.model, "generation_config") and self.model.generation_config:
+            self.model.generation_config.do_sample = False
 
 
     def _get_loglikelihood(self, inputs: str, conts: str) -> float:
@@ -351,64 +350,33 @@ class LLaDAModel(BaseModel):
         messages = _convert_chat_messages(inputs)
         prompt = [self.tokenizer.apply_chat_template(m_i, add_generation_prompt=True, tokenize=False) for m_i in messages]
         print('steps:', self.gen_steps, 'length:', self.gen_length, 'blocksize:', self.gen_blocksize)
-        print('temperature:', self.temperature, 'cfg:', self.cfg, 'remasking:', self.remasking)
-        print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
-        print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf, 'diff_logits_eos_inf:', self.diff_logits_eos_inf)
+        # print('temperature:', self.temperature, 'cfg:', self.cfg, 'remasking:', self.remasking)
+        print('temperature:', self.temperature, 'cfg:', self.cfg)
+        # print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
+        # print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf, 'diff_logits_eos_inf:', self.diff_logits_eos_inf)
         print('final prompt:', prompt)
         self.tokenizer.padding_side = "left" 
         prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')
         input_ids = prompt['input_ids'].to(self.model.device)
-        attention_mask = prompt['attention_mask']
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(self.model.device)
         
-        if self.use_cache:
-            if self.dual_cache:
-                x, nfe = LLaDA_generate_with_dual_cache(
-                    model = self.model, 
-                    prompt = input_ids,
-                    attention_mask = attention_mask, 
-                    steps = self.gen_steps, 
-                    gen_length = self.gen_length, 
-                    block_length = self.gen_blocksize, 
-                    temperature = self.temperature, 
-                    remasking = self.remasking, 
-                    mask_id = self.mask_id, 
-                    threshold = self.threshold, 
-                    factor = self.factor
-                )
-            else:
-                x, nfe = LLaDA_generate_with_prefix_cache(
-                    model = self.model, 
-                    prompt = input_ids,
-                    attention_mask = attention_mask,
-                    steps = self.gen_steps, 
-                    gen_length = self.gen_length, 
-                    block_length = self.gen_blocksize, 
-                    temperature = self.temperature, 
-                    remasking = self.remasking, 
-                    mask_id = self.mask_id, 
-                    threshold = self.threshold, 
-                    factor = self.factor
-                )
-        else:
-            x = LLaDA_generate(
-                model = self.model,
-                prompt = input_ids,
-                attention_mask = attention_mask,
-                steps = self.gen_steps,
-                gen_length = self.gen_length,
-                block_length = self.gen_blocksize,
-                temperature = self.temperature,
-                cfg_scale = self.cfg,
-                remasking = self.remasking,
-                mask_id = self.mask_id,
-                confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
-                logits_eos_inf = self.diff_logits_eos_inf,
-            )
+        
+        x = self.model.generate(
+            inputs=input_ids,
+            eos_early_stop=self.eos_early_stop,
+            gen_length=self.gen_length,
+            block_length=self.batch_size,
+            steps=self.gen_steps,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            top_k=self.top_k,
+            minimal_topk=self.minimal_topk,
+            threshold=self.threshold,
+            eos_id=self.padding_id,
+            mask_id=self.mask_id,
+        )
+        
         responses = []
-        batch_size = input_ids.shape[0]
-        
+        batch_size = len(x)
         for i in range(batch_size):
             responses.append(self.tokenizer.decode(x[i, -self.gen_length:], skip_special_tokens=True))
         print('--------------------')
@@ -435,22 +403,6 @@ class LLaDAModel(BaseModel):
             List[float]: A list of perplexity scores.
         """
         raise NotImplementedError('Please use `lmeval` toolkit instead.')
-
-        if self.batch_padding and len(inputs) > 1:
-            assert self.tokenizer.pad_token
-            return self._get_ppl(inputs, mask_length=mask_length)
-        else:
-            if mask_length is not None:
-                print('_______')
-                return np.concatenate([
-                    self._get_ppl(inputs=[text],
-                                         mask_length=[mask_length[idx]])
-                    for idx, text in enumerate(inputs)
-                ])
-            return np.concatenate([
-                self._get_ppl(inputs=[text], mask_length=mask_length)
-                for text in inputs
-            ])
 
     def get_loglikelihood(self, inputs: List[str], conts:  List[str]) -> List[float]:
         print('inputs:', inputs, 'conts:', conts)
@@ -513,57 +465,3 @@ def  _convert_base_messages(inputs):
                 messages.append(item['prompt'])
             outputs.append(''.join(messages))
     return outputs
-
-class LLaDABaseModel(LLaDAModel):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.template_parser = LMTemplateParser()
-    def generate(self, inputs: List[str], max_out_len: int) -> List[str]:
-        """Generate results given a list of inputs. """
-        messages = _convert_base_messages(inputs)
-        prompt = messages
-        print('steps:', self.gen_steps, 'length:', self.gen_length, 'blocksize:', self.gen_blocksize)
-        print('temperature:', self.temperature, 'cfg:', self.cfg, 'remasking:', self.remasking)
-        print('mask_id:', self.mask_id, 'padding_id:', self.padding_id)
-        print('diff_confidence_eos_eot_inf:', self.diff_confidence_eos_eot_inf, 'diff_logits_eos_inf:', self.diff_logits_eos_inf)
-        print('final prompt:', prompt)
-        self.tokenizer.padding_side = "left" 
-        prompt = self.tokenizer.batch_encode_plus(prompt, padding = True, return_tensors='pt')['input_ids']
-        x = LLaDA_generate(
-            model = self.model,
-            prompt = prompt.to(self.model.device),
-            steps = self.gen_steps,
-            gen_length = self.gen_length,
-            block_length = self.gen_blocksize,
-            temperature = self.temperature,
-            cfg_scale = self.cfg,
-            remasking = self.remasking,
-            mask_id = self.mask_id,
-            confidence_eos_eot_inf = self.diff_confidence_eos_eot_inf,
-            logits_eos_inf = self.diff_logits_eos_inf,
-        )
-        responses = []
-        batch_size = prompt.shape[0]
-        
-        for i in range(batch_size):
-            responses.append(self.tokenizer.decode(x[i, -self.gen_length:], skip_special_tokens=True))
-        print('--------------------')
-        for i in range(batch_size):
-            print(f'Response {i}:', responses[i])
-            print('====================')
-        print('--------------------')
-        stopping_criteria = set(self.stop_words)
-        for i in range(batch_size):
-            response = responses[i]
-            for stop_word in stopping_criteria:
-                if stop_word in response:
-                    response = response.split(stop_word)[0]
-                    break
-            responses[i] = response
-        return responses
-    
-    def get_token_len(self, prompt: str, add_special_tokens: bool=True) -> int:
-        m = _convert_base_messages([prompt])[0]
-        t = self.tokenizer(m, add_special_tokens=add_special_tokens)
-        return len(t['input_ids'])
-    

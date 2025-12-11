@@ -17,7 +17,7 @@ eval_cfg = {
         'dllm_block_length': 4,
         'dllm_denoising_steps': 4,
         'dllm_unmasking_strategy': "low_confidence_dynamic",
-        'dllm_confidence_threshold': 0.9,
+        'dllm_confidence_threshold': 0.95,
     },
     'gen_config': {
         'top_k': 0, 

@@ -36,7 +36,7 @@ engine=${engine:-hf}
 
 if [ -z "${task}" ]; then
   echo "Usage: bash eval.sh ${task}"
-  echo "Optional task: mmlu, mmlupro, hellaswag, arcc, gsm8k_confidence math_confidence gpqa_confidence humaneval_logits mbpp_confidence gsm8k_short math_short"
+  echo "Optional task: mmlu, mmlupro, hellaswag, arcc, gsm8k_confidence math_confidence gpqa_confidence humaneval_logits mbpp_confidence gsm8k_short math_short olympiadbench"
   exit 1
 fi
 
@@ -89,6 +89,10 @@ case "${task}" in
     py_script=sdar_examples/${prefix}sdar_8b_chat_gen_math_length512.py
     work_dir=outputs/${prefix}sdar_8b_chat_gen_math_length512
     ;;
+  olympiad)
+    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_olympiadbench_length2048.py
+    work_dir=outputs/${prefix}sdar_8b_chat_gen_olympiadbench_length2048
+    ;;
   aime2024)
     py_script=sdar_examples/${prefix}sdar_8b_chat_gen_aime2024_length2048.py
     work_dir=outputs/${prefix}sdar_8b_chat_gen_aime2024_length2048
@@ -109,6 +113,6 @@ echo "Script: ${py_script}"
 echo "Work Dir: ${work_dir}"
 echo "Log Dir: ${log_dir}"
 
-python run.py "${py_script}" -w "${work_dir}" \
+python run.py "${py_script}" -w "${work_dir}"  \
 >> "${log_dir}/eval-${task}-${timestamp}.out" \
 2>> "${log_dir}/eval-${task}-${timestamp}.err" &

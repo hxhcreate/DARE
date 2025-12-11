@@ -2,40 +2,31 @@ from mmengine.config import read_base
 with read_base():
     from ..opencompass.configs.datasets.mmlu_pro.mmlu_pro_gen import \
         mmlu_pro_datasets
-    from ..opencompass.configs.models.dllm.lmdeploy_sdar_8b_chat import \
-        models as lmdeploy_sdar_8b_chat
+    from ..opencompass.configs.models.dllm.llada2_mini import \
+        models as llada2_mini_models
     from ..opencompass.configs.summarizers.groups.mmlu_pro import \
         mmlu_pro_summary_groups
 datasets = mmlu_pro_datasets
-models = lmdeploy_sdar_8b_chat
+models = llada2_mini_models
 summarizer = dict(
     summary_groups=sum([v for k, v in locals().items() if k.endswith('_summary_groups')], []),
 )
 eval_cfg = {
-    'engine_config': {
-        'session_len': 4096, 
-        'max_batch_size': 16, 
-        'tp': 1,
-        'dtype': "float16",
-        'max_prefill_token_num': 2048,
-        'cache_max_entry_count': 0.8,
-        'dllm_block_length': 4,
-        'dllm_denoising_steps': 4,
-        'dllm_unmasking_strategy': "low_confidence_dynamic",
-        'dllm_confidence_threshold': 0.9,
+    'gen_blocksize': 32, 
+    'gen_length': 256, 
+    'gen_steps': 32, 
+    'batch_size': 1, 
+    'batch_size_': 1,
+    'model_kwargs': {
+        'attn_implementation': 'sdpa',  #'sdpa'
+        'torch_dtype': 'bfloat16',
+        'device_map': 'auto',
     },
-    'gen_config': {
-        'top_k': 0, 
-        'temperature': 1.0, 
-        'top_p': 0.95, 
-        'do_sample': False, 
-        'max_new_tokens': 128,
-    },
-    'max_seq_len': 4096,
-    'max_out_len': 128,
-    'batch_size': 16,
+    "temperature": 0.0,
+    "threshold": 0.95,
+    "minimal_topk": 1.0,
+    "eos_early_stop": False
 }
-
 for model in models:
     model.update(eval_cfg)
 from opencompass.partitioners import NumWorkerPartitioner
