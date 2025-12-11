@@ -1,8 +1,8 @@
-from opencompass.models import LLaDAMoEBaseModel
+from opencompass.models import LLaDAMoEModel
 
 models = [
     dict(
-        type=LLaDAMoEBaseModel,
+        type=LLaDAMoEModel,
         abbr='llada-moe-7b-a1b-base',
         path='/TO/YOUR/PATH',
         batch_size=1,
