@@ -89,6 +89,10 @@ case "${task}" in
     py_script=sdar_examples/${prefix}sdar_4b_chat_gen_math_length512.py
     work_dir=outputs/${prefix}sdar_4b_chat_gen_math_length512
     ;;
+  olympiad)
+    py_script=sdar_examples/${prefix}sdar_4b_chat_gen_olympiadbench_length2048.py
+    work_dir=outputs/${prefix}sdar_4b_chat_gen_olympiadbench_length2048
+    ;;
   aime2024)
     py_script=sdar_examples/${prefix}sdar_4b_chat_gen_aime2024_length2048.py
     work_dir=outputs/${prefix}sdar_4b_chat_gen_aime2024_length2048
@@ -96,10 +100,6 @@ case "${task}" in
   aime2025)
     py_script=sdar_examples/${prefix}sdar_4b_chat_gen_aime2025_length2048.py
     work_dir=outputs/${prefix}sdar_4b_chat_gen_aime2025_length2048
-    ;;
-  olympiadbench)
-    py_script=sdar_examples/${prefix}sdar_4b_chat_gen_olympiadbench_length2048.py
-    work_dir=outputs/${prefix}sdar_4b_chat_gen_olympiadbench_length2048
     ;;
   *)
     echo "Unknown task: ${task}"
