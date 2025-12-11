@@ -35,7 +35,7 @@ def _get_meta_template(meta_template):
 
 
 @MODELS.register_module()
-class LLaDAMoeModel(BaseModel):
+class LLaDAMoEModel(BaseModel):
     """Model wrapper around LLaDA model.
 
     Args:
@@ -480,7 +480,7 @@ def  _convert_base_messages(inputs):
             outputs.append(''.join(messages))
     return outputs
 
-class LLaDAMoeBaseModel(LLaDAMoeModel):
+class LLaDAMoEBaseModel(LLaDAMoeModel):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.template_parser = LMTemplateParser()
