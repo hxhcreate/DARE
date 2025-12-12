@@ -211,7 +211,7 @@ DARE is still work in progress. We are considering supporting more models for tr
 | **LLaDA-8B-Base** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **LLaDA-8B-Instruct** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **LLaDA-1.5** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
-| **Dream** | 7B | sft | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
+| **Dream** | 7B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **SDAR-1.7B-Chat** | 1.7B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
 | **SDAR-4B-Chat** | 4B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
 | **SDAR-8B-Chat** | 8B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |

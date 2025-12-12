@@ -41,7 +41,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, PreTrainedModel
 
 import verl.utils.hdfs_io as hdfs_io
-from verl.utils.dataset.dllm_sft_dataset import dLLMSFTDataset
+from verl.utils.dataset.sdar_sft_dataset import dLLMSFTDataset
 # from verl.utils.dataset.multiturn_dllm_sft_dataset import MultiTurndLLMSFTDataset
 from verl.utils.debug import log_gpu_memory_usage
 from verl.utils.distributed import initialize_global_process_group
@@ -56,7 +56,7 @@ from verl.utils.fsdp_utils import (
     init_fn,
     fsdp2_clip_grad_norm_
 )
-from verl.utils.torch_functional import get_cosine_schedule_with_warmup, get_wsd_schedule_with_warmup
+from verl.utils.torch_functional import make_basic_block_attention, get_cosine_schedule_with_warmup, get_wsd_schedule_with_warmup
 from verl.utils.py_functional import convert_to_regular_types
 from verl.utils.tracking import Tracking
 from verl.utils.ulysses import (
@@ -321,9 +321,8 @@ class FSDPdLLMSFTTrainer:
         input_ids = batch["input_ids"].to(self.device_name)
         attention_mask = batch["attention_mask"].to(self.device_name)
         position_ids = batch["position_ids"].to(self.device_name)
-        loss_mask = batch.pop("loss_mask").to(self.device_name)
+        logits_to_keep = batch["logits_to_keep"].to(self.device_name)
         loss_fct = nn.CrossEntropyLoss(reduction="none")
-        t = batch["t"].to(self.device_name)
         labels = batch["labels"].to(self.device_name)
 
         # Context manager for sequence parallel if needed
@@ -332,101 +331,22 @@ class FSDPdLLMSFTTrainer:
             if not use_sp:
                 # Standard forward pass without sequence parallel
                 # position_ids=position_ids, 
-                output = self.fsdp_model(input_ids=input_ids, attention_mask=attention_mask.bool(), use_cache=False)
-                logits = output.logits
-
-                # Flatten the tokens
-                logits = logits.view(-1, self.model.config.vocab_size)
-                labels = labels.view(-1)
-                # Enable model parallelism
-                unsclaed_loss = loss_fct(logits, labels).view(input_ids.shape[0], -1)
-
-                loss = unsclaed_loss / t.unsqueeze(-1).view(input_ids.shape[0], -1)
-                loss = loss * loss_mask.to(loss.device)
-            else:
-                # IMPORTANT: We have a big assumption here, so we can shard the SAME sequence across SP ranks
-                # i.e., each GPU has <1 sequence, and each SP group has 1 sequence
-                # 1. All SP ranks will receive the *SAME* batch
-                # 2. Different SP groups will receive *DIFFERENT* batches
-                # This is implemented by the DistributedSampler
-
-                batch_size, seqlen = input_ids.shape
-                # Remove padding
-                input_ids_rmpad, indices, *_ = unpad_input(input_ids.unsqueeze(-1), attention_mask)  # input_ids_rmpad (total_nnz, ...)
-                input_ids_rmpad = input_ids_rmpad.squeeze(-1)  # (total_nnz,)
-
-                # Remove padding for labels
-                labels_rmpad, _, *_ = unpad_input(labels.unsqueeze(-1), attention_mask)
-                labels_rmpad = labels_rmpad.squeeze(-1)  # (total_nnz,) 
-
-                loss_mask_rmpad, _, *_ = unpad_input(loss_mask.unsqueeze(-1), attention_mask)
-                loss_mask_rmpad = loss_mask_rmpad.squeeze(-1)  # (total_nnz,)
-
-                attention_mask_rmpad, _, *_ = unpad_input(attention_mask.unsqueeze(-1), attention_mask)
-                attention_mask_rmpad = attention_mask_rmpad.squeeze(-1)  # (total_nnz,)
-
-                input_ids_rmpad_sp = input_ids_rmpad.unsqueeze(0)  # (1, total_nnz)
-                # Pad and slice inputs for sequence parallelism
-                input_ids_rmpad_sliced, _, pad_size = ulysses_pad_and_slice_inputs(
-                    input_ids_rmpad_sp, None, sp_size=get_ulysses_sequence_parallel_world_size()
-                ) # (1, total_nnz // sp) 
-                labels_rmpad_sp = labels_rmpad.unsqueeze(0)  # (1, total_nnz)
-                # Pad and slice inputs for sequence parallelism
-                labels_rmpad_sliced, _, _ = ulysses_pad_and_slice_inputs(
-                    labels_rmpad_sp, None, sp_size=get_ulysses_sequence_parallel_world_size()
-                ) # (1, total_nnz // sp) 
-                
-                chunk_size = batch_size // self.config.ulysses_sequence_parallel_size
-                sp_rank = torch.distributed.get_rank() % self.config.ulysses_sequence_parallel_size
-                
-                # Get the cu_seqlens in corresponding SP rank
-                start_idx = sp_rank * chunk_size
-                end_idx = (sp_rank + 1) * chunk_size
-                seq_lens = attention_mask[start_idx:end_idx].sum(dim=-1).to(torch.int32)  # (batch_size // sp,)
-                cu_seqlens = torch.cat([
-                    torch.zeros(1, device=seq_lens.device, dtype=torch.int32),
-                    seq_lens.cumsum(dim=0).to(torch.int32)
-                ])
-                max_seqlen = seq_lens.max().item()
-
-                # Forward pass
                 output = self.fsdp_model(
-                    input_ids=input_ids_rmpad_sliced,
-                    attention_mask=None,  # Not needed with flash attention varlen
-                    cu_seqlens=cu_seqlens,
-                    max_seqlen=max_seqlen,
-                    use_cache=False,
-                )
+                    input_ids=input_ids, 
+                    attention_mask=attention_mask.bool(), 
+                    position_ids=position_ids,
+                    labels=labels,
+                    logits_to_keep=logits_to_keep,
+                    use_cache=False)
+                loss = output.loss
 
-                # Compute loss locally then gather and unpad for sequence parallelism
-                logits_rmpad_sliced = output.logits # (1, total_nnz // sp, vocab_size)
-                loss_rmpad_sliced = loss_fct(logits_rmpad_sliced.squeeze(0), labels_rmpad_sliced.squeeze(0))  # (total_nnz // sp,)
-                loss_rmpad_gathered = gather_outpus_and_unpad(
-                    loss_rmpad_sliced, gather_dim=0, unpad_dim=0, padding_size=pad_size
-                )  # (total_nnz,)
-
-                # This is the loss collected from all ulysses ranks
-                unsclaed_full_loss = pad_input(
-                    hidden_states=loss_rmpad_gathered.unsqueeze(-1), 
-                    indices=indices, 
-                    batch=batch_size, 
-                    seqlen=seqlen
-                ).squeeze(-1)  # (batch_size, seqlen)
-
-                # Apply loss mask and t scaling
-                full_loss = unsclaed_full_loss / t.unsqueeze(-1)
-                loss = full_loss * loss_mask
-
-            valid_token_this_rank = torch.sum(loss_mask)
-
-            if self.config.data.balance_dp_token:
-                torch.distributed.all_reduce(valid_token_this_rank)
-                dp_size = self.ulysses_device_mesh.size("dp") if use_sp else torch.distributed.get_world_size()
             else:
-                dp_size = 1
-
-            loss = torch.sum(loss) / (valid_token_this_rank + 1e-8) * dp_size
-            # print('----loss----:', loss)
+                torch.distributed.barrier()
+                raise RuntimeError(
+                    "SDAR flex_attention training does not support sequence parallelism yet. "
+                    "Disable use_remove_padding and set ulysses_sequence_parallel_size=1."
+                )
+                
             if do_backward:
                 loss.backward()
             return loss

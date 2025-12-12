@@ -56,7 +56,7 @@ class dLLMSFTDataset(Dataset):
         self.shuffle = config.get("shuffle", False)
         self.seed = config.get("seed")
         self.apply_chat_template_kwargs = config.get("apply_chat_template_kwargs", {})
-        self.mask_token_id = config.get("mask_token_id", 126336)
+        self.mask_token_id = config.get("mask_token_id", 151669)
         self.eval = eval
 
         assert truncation in ["error", "left", "right"]
@@ -212,8 +212,8 @@ class dLLMSFTDataset(Dataset):
         # padding to max length
         sequence_length = input_ids.shape[0]
         if sequence_length < self.max_length:
-            padded_input_ids = torch.ones(size=(self.max_length - sequence_length,), dtype=input_ids.dtype) * self.tokenizer.eos_token_id
-            padded_attention_mask = torch.ones(size=(self.max_length - sequence_length,), dtype=attention_mask.dtype)
+            padded_input_ids = torch.ones(size=(self.max_length - sequence_length,), dtype=input_ids.dtype) * self.tokenizer.pad_token_id
+            padded_attention_mask = torch.zeros(size=(self.max_length - sequence_length,), dtype=attention_mask.dtype)
 
             input_ids = torch.cat((input_ids, padded_input_ids))
             attention_mask = torch.cat((attention_mask, padded_attention_mask))
@@ -232,16 +232,17 @@ class dLLMSFTDataset(Dataset):
 
         position_ids = compute_position_id_with_mask(attention_mask)
 
-        # ---- forward_process (random mask here) ----
-        prompt_length = prompt_ids.shape[0]
-        noisy_input_ids, t, mask_indices, labels = self._forward_process(input_ids, prompt_length, item)
-        loss_mask = mask_indices
+        logits_to_keep = attention_mask.clone()
+        if prompt_length > 1:
+            # mask out prompt for SFT.
+            logits_to_keep[: min(prompt_length, logits_to_keep.size(0))] = 0
+        labels = input_ids.clone()
+        labels[: min(prompt_length, logits_to_keep.size(0))] = -100
 
         return {
-            "input_ids": noisy_input_ids,
+            "input_ids": input_ids,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
-            "loss_mask": loss_mask,
-            't': t,
+            "logits_to_keep": logits_to_keep,
             'labels': labels,
         }
