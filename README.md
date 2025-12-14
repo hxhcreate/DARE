@@ -267,13 +267,10 @@ For any questions or collaboration inquiries, feel free to reach out Jingyi Yang
 If you find our work useful, please consider citing:
 
 ```bibtex
-@misc{DARE,
-    author = {Jingyi Yang},
-    title = {DARE: dLLM Alignment and Reinforcement Executor},
-    year = {2025},
-    publisher = {GitHub},
-    journal = {GitHub repository},
-    howpublished = {\url{https://github.com/yjyddq/DARE}},
+@article{yang2025dare,
+  title={DARE: dLLM Alignment and Reinforcement Executor},
+  author={Yang, Jingyi, Jiang Yuxian, Shao Jing},
+  journal={URL https://github.com/yjyddq/DARE}
 }
 
 @article{yang2025taming,
