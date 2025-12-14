@@ -39,7 +39,6 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     model.trust_remote_code=True \
     +model.attn_implementation="flash_attention_2" \
     +model.fsdp_config.model_dtype=float32 \
-    +model.external_lib=transformers_modules.SDAR-8B-Chat \
     trainer.default_local_dir=$CKPT_DIR \
     trainer.project_name=$PROJECT_NAME \
     trainer.experiment_name=$EXP_NAME \
@@ -56,3 +55,4 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
 
     # Or you can do this:
     # model.target_modules=[q_proj,v_proj] \
+    # +model.external_lib=transformers_modules.SDAR-8B-Chat \
