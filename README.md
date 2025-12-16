@@ -137,7 +137,7 @@ Or you can move the model weights (`.safetensors`) to `model/xxx/*`
 cp <path_to_llada_model>/*.safetensors models/xxx/
 ```
 
-👀 Stay tuned for the adaptation of several key features to other models (i.e., Dream, SDAR, etc.)
+Also for Dream, SDAR, etc.
 
 ### 🗄️ Dataset Setup
 
