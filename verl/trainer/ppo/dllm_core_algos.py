@@ -197,6 +197,63 @@ def compute_policy_loss_spg(
     # Return the policy loss, clipping ratio, KL divergence and lower bound clipping ratio
     return pg_loss, None, None, None
 
+def compute_dpo_loss(
+    chosen_log_prob: torch.Tensor,
+    rejected_log_prob: torch.Tensor,
+    chosen_ref_log_prob: torch.Tensor,
+    rejected_ref_log_prob: torch.Tensor,
+    beta: float,
+) -> torch.Tensor:
+    import torch.nn.functional as F
+
+    pi_logratios = chosen_log_prob - rejected_log_prob
+    ref_logratios = chosen_ref_log_prob - rejected_ref_log_prob
+
+    logits = pi_logratios - ref_logratios
+
+    losses = -F.logsigmoid(beta * logits)
+
+    return losses.mean()
+
+def _forward_process_vrpo(batch, attention_mask, prompt_len, t=None, eps=1e-3, MASK_TOKEN_ID=126336):
+    """
+    Forward process: add noise to the batch
+    Only mask the part where attention_mask == 1, padding part and prompt part are not masked
+    batch: (batch_size, seq_len) Each data should be the same
+    attention_mask: (seq_len,)
+    prompt_len: int
+    t: (batch_size) Diffusion time step (float between 0 and 1), if not passed, automatically sample
+    eps: float, small constant to prevent mask probability to be 0
+    """
+    b, seq_len = batch.shape  # (batch_size, seq_len)
+    
+    # Valid token region (excluding prompt/padding)
+    response_mask = attention_mask.bool().clone()  # (seq_len,)
+    response_mask[:prompt_len] = False
+    # print(f"pad prompt_len: {prompt_len}")
+    response_indices = torch.where(response_mask)[0]  # Valid token indices (target_len,)
+    target_len = response_mask.sum().item()  # Valid token count in response region
+    # print(f"true target_len: {target_len}")
+
+    # NOTE: discrete version (refer to https://github.com/ML-GSAI/LLaDA/blob/main/eval_llada.py):
+    k = torch.randint(1, target_len + 1, (), device=batch.device)
+
+    # x is a integer vector of shape [b]. x[i] represents the number of tokens to be masked in the target region of the i-th sample, ensuring uniform distribution and in the range of [1, target_len].
+    x = torch.round(torch.linspace(float(k), k + (b - 1) * (target_len / b), steps=b, device=batch.device)).long()
+    x = ((x - 1) % target_len) + 1
+    assert 1 <= x.min() and x.max() <= target_len
+
+    mask_indices = torch.zeros((b, seq_len), dtype=torch.bool, device=batch.device)
+    for i in range(b):
+        perm = torch.randperm(target_len, device=batch.device)
+        mask_pos = response_indices[perm[:x[i]]]
+        mask_indices[i, mask_pos] = True  # [False, False, ..., True, True, ..., False, False]
+
+    noisy_batch = torch.where(mask_indices, MASK_TOKEN_ID, batch)  # mask tokens and get noisy batch
+    p_mask = (x / target_len).unsqueeze(1).repeat(1, seq_len)  # Normalized weight for each sample's mask ratio (mask probability)
+    # print(f"noisy_batch[0] sum: {noisy_batch[0][attention_mask == 1].sum()}")
+    return noisy_batch, mask_indices, p_mask
+
 
 def kl_penalty(l_theta: torch.FloatTensor, ref_l_theta: torch.FloatTensor, kl_penalty, advantages: torch.FloatTensor) -> torch.FloatTensor:
     """Compute KL divergence given l_theta and ref_l_theta.
