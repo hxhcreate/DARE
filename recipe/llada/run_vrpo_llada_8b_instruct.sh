@@ -53,7 +53,7 @@ if [[ ! " ${valid_models[@]} " =~ " ${model} " ]]; then
 fi
 
 # validate algorithm
-valid_algorithms=("d1" "coupled-grpo" "mdpo" "cj-grpo" "spg" "bgpo" "vrpo")
+valid_algorithms=("vrpo")
 if [[ ! " ${valid_algorithms[@]} " =~ " ${algorithm} " ]]; then
     echo "Error: Invalid algorithm '$algorithm'"
     echo "Supported algorithms: ${valid_algorithms[*]}"
