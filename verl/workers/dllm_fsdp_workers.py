@@ -848,7 +848,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             with adapter_ctx:
                 output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
             output = DataProto.from_dict(
-                tensors={"loss": output, "entropys": entropys},
+                tensors={"old_log_probs": output, "entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
             output = self.ulysses_sharding_manager.postprocess_data(output)
