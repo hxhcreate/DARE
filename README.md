@@ -226,6 +226,7 @@ DARE is still work in progress. We are considering supporting more models for tr
 | Algorithm | Arxiv | Source Code |
 |-------|------------|------------------------|
 | **d1** | [2504.12216](https://arxiv.org/pdf/2504.12216) | [dllm-reasoning/d1](https://github.com/dllm-reasoning/d1) |
+| **vrpo** | [2505.19223](https://arxiv.org/abs/2505.19223) | [ML-GSAI/LLaDA-1.5](https://github.com/ML-GSAI/LLaDA-1.5) (closed source) |
 | **coupled-grpo** | [2506.20639](https://arxiv.org/pdf/2506.20639) | [apple/ml-diffucoder](https://github.com/apple/ml-diffucoder) |
 | **mdpo** | [2508.13148](https://arxiv.org/pdf/2508.13148) | [autonomousvision/mdpo](https://github.com/autonomousvision/mdpo) |
 | **cj-grpo** | [2509.23924](https://arxiv.org/pdf/2509.23924) | [yjyddq/EOSER-ASS-RL](https://github.com/yjyddq/EOSER-ASS-RL) |
