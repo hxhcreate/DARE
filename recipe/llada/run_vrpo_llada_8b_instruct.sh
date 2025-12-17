@@ -131,8 +131,8 @@ python3 -m verl.trainer.dllm_main_dpo \
     data.max_response_length=$max_response_length \
     data.add_eos=false \
     data.truncation=left \
-    +actor_rollout_ref.model.name=${model} \
     +actor_rollout_ref.algorithm.name=${algorithm} \
+    +actor_rollout_ref.model.name=$model \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \

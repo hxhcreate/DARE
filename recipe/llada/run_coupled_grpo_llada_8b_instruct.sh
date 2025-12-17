@@ -167,6 +167,7 @@ python3 -m verl.trainer.main_dllm_ppo \
     data.filter_overlong_prompts=True \
     data.truncation="error" \
     +actor_rollout_ref.algorithm.name=${algorithm} \
+    +actor_rollout_ref.model.name=$model \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \

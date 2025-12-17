@@ -148,7 +148,16 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():
                 actor_module_class = AutoModelForVision2Seq
             else:
-                actor_module_class = AutoModel # AutoModelForCausalLM
+                model_name = self.config.model.name
+                if model_name in ["dream", "sdar"]:
+                    actor_module_class = AutoModelForCausalLM
+                elif model_name == "llada":
+                    actor_module_class = AutoModel
+                else:
+                    try:
+                        actor_module_class = AutoModelForCausalLM
+                    except Exception:
+                        actor_module_class = AutoModel
 
             # # LNY: ref model enable quantization
             # bnb_config = None
