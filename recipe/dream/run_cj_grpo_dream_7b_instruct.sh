@@ -168,6 +168,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     data.truncation="error" \
     data.trust_remote_code=True \
     +actor_rollout_ref.algorithm.name=${algorithm} \
+    +actor_rollout_ref.model.name=$model \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \

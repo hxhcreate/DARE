@@ -149,9 +149,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 actor_module_class = AutoModelForVision2Seq
             else:
                 model_name = self.config.model.name
-                if model_name in ["dream", "sdar"]:
+                if model_name in ["sdar"]:
                     actor_module_class = AutoModelForCausalLM
-                elif model_name == "llada":
+                elif model_name in ["dream", "llada"]:
                     actor_module_class = AutoModel
                 else:
                     try:
