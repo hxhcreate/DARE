@@ -21,6 +21,7 @@ data:
   truncation: error
   balance_dp_token: False
   chat_template: null
+  trust_remote_code: False  # main_dpo will check this config to determine whether to use remote code for tokenizer
   custom_cls:
     path: null
     name: null

@@ -602,6 +602,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 trust_remote_code=self.config.model.get("trust_remote_code", False),
                 use_liger=self.config.model.get("use_liger", False),
                 role="ref",
+                attn_implementation=self.config.model.get("attn_implementation", "eager"),  
             )[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
