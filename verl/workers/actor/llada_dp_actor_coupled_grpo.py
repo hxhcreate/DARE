@@ -90,6 +90,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             seq = micro_batch["input_ids"]  # (bs, seq_len)
             attention_mask = micro_batch["attention_mask"]  # (bs, mc_num, seq_len)
 
+            log_probs = torch.zeros((batch_size, mc_num, response_length), device=device)
             loss_per_sample = torch.zeros((batch_size, mc_num), device=device)
             for i in range(mc_num):
                 cur_perturbed_seq = perturbed_seq[:, i, :]  # (batch_size, seq_len)
@@ -110,7 +111,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                 logits = self._get_logits(model=self.actor_module, packed_input=packed_perturbed_seq, cu_seqlens=cu_seqlens, max_seqlen=max_seqlen, prompt_len=attention_mask[:, :prompt_length].sum(dim=1), cfg_scale=0.0, MASK_TOKEN_ID=self.MASK_TOKEN_ID)
                 
                 # Restore logits for each sample
-                loss = torch.zeros(batch_size, device=device)
+                loss = torch.zeros((batch_size, response_length), device=device)
                 for b in range(batch_size):
                     start, end = cu_seqlens[b], cu_seqlens[b + 1]
                     
@@ -118,13 +119,10 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                     logits_b[attention_mask[b] == 1] = logits[0, start:end]
                     
                     mask = cur_mask_indices[b]  # (seq_len,)
-                    loss[b] = (F.cross_entropy(logits_b[mask], seq[b][mask], reduction="none") / cur_p_mask[b][mask]).sum()  # cross_entropy returns negative log likelihood
-                loss_per_sample[:, i] = -loss  # convert to log likelihood
+                    loss[b] = F.cross_entropy(logits_b, seq[b], reduction="none")[-response_length:]  # cross_entropy returns negative log likelihood
+                    loss_per_sample[b, i] = (loss[b] * mask[-response_length:]).sum() / mask[-response_length:].sum() # (batch_size,)
+                log_probs[:, i, :] = -loss  # convert to log likelihood (batch_size, mc_num, response_length)
 
-            log_likelihood = loss_per_sample.sum(dim=1) / mc_num  # (batch_size,)
-            log_probs = (log_likelihood / response_length).view(-1, 1).repeat(1, response_length)  # (batch_size, response_length)
-            loss_per_sample = (loss_per_sample / response_length).unsqueeze(-1).expand(-1, -1, response_length).contiguous()
-        
         entropy = None
         if calculate_entropy:
             probs = log_probs.exp()
@@ -219,7 +217,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
             loss_per_sample = loss_per_sample[revert_indices]
-        return loss_per_sample, entropys  # loss_per_sample is stored in old_log_probs field
+        return entropys, log_probs, loss_per_sample
 
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):
@@ -279,7 +277,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                     else:
                         response_mask = attention_mask[:, -response_length:]
 
-                    old_log_prob = data["old_log_probs"]  # (bsz, mc_num)
+                    old_log_probs = data["old_log_probs"]  # (bsz, mc_num)
                     advantages = data["advantages"]
 
                     clip_ratio = self.config.clip_ratio
@@ -293,6 +291,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                     calculate_entropy = False
                     if entropy_coeff != 0:
                         calculate_entropy = True
+
                     
                     accumulated_pg_loss = 0.0
                     accumulated_pg_clipfrac = 0.0
@@ -311,25 +310,24 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             "mask_indices": mask_indices[:, i:i+1],
                             "p_mask": p_mask[:, i:i+1],
                         }
-                        entropy, log_prob, loss_per_sample = self._forward_micro_batch(micro_batch=data, temperature=temperature, n_l=1, mc_num=1, calculate_entropy=calculate_entropy, call_fn_name="update_policy")
-                        print(f"\nloss_per_sample: {loss_per_sample[0, 0, 0]}")
+                        entropy, log_probs, loss_per_sample = self._forward_micro_batch(micro_batch=data, temperature=temperature, n_l=1, mc_num=1, calculate_entropy=calculate_entropy, call_fn_name="update_policy")
+                        print(f"\nloss_per_sample: {loss_per_sample[0]}")
                         
                         # Compute policy loss
                         pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower = compute_policy_loss(
-                            old_l_theta=old_log_prob[:, i, :],  # (bsz, response_length)
-                            l_theta=loss_per_sample[:, 0, :],  # (bsz, response_length)
+                            old_l_theta=old_log_probs[:, i, :],  # (bsz, response_length)
+                            l_theta=log_probs[:, 0, :],  # (bsz, response_length)
                             advantages=advantages,
-                            response_mask=response_mask,
+                            response_mask=mask_indices[:, i, :][:, -response_length:],
                             cliprange=clip_ratio,
                             cliprange_low=clip_ratio_low,
                             cliprange_high=clip_ratio_high,
                             clip_ratio_c=clip_ratio_c,
                             loss_agg_mode=loss_agg_mode,
                         )
-                        print(f"pg_loss: {pg_loss}")
 
                         if entropy_coeff != 0:
-                            entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                            entropy_loss = agg_loss(loss_mat=entropy, loss_mask=mask_indices[:, i, :], loss_agg_mode=loss_agg_mode)
 
                             # compute policy loss
                             policy_loss = pg_loss - entropy_loss * entropy_coeff
@@ -340,7 +338,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             ref_log_prob = data["ref_log_prob"]
                             # compute kl loss
                             kld = kl_penalty(l_theta=loss_per_sample[:, 0, :], ref_l_theta=ref_log_prob[:, i, :], kl_penalty=self.config.kl_loss_type, advantages=advantages)
-                            kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                            kl_loss = agg_loss(loss_mat=kld, loss_mask=mask_indices[:, i, :], loss_agg_mode=loss_agg_mode)
 
                             policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                             metrics["actor/kl_loss"] = kl_loss.detach().item()

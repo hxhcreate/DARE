@@ -1,7 +1,6 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
 # Copyright 2023-2024 SGLang Team
 # Copyright 2025 ModelBest Inc. and/or its affiliates
-# Copyright 2025 Shanghai AI Lab
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -138,7 +137,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             probs = log_probs.exp()
             entropy = -probs * log_probs  # (bs, response_length) entropy of each token
             
-        return entropy, log_probs
+        return entropy, log_probs, None
     
     def _get_logits(self, model, packed_input, cu_seqlens, max_seqlen, prompt_len, cfg_scale=0.0, MASK_TOKEN_ID=126336):
         """
@@ -209,7 +208,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
             with torch.no_grad():
-                entropy, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
+                entropy, log_probs, loss_per_sample = self._forward_micro_batch(micro_batch, temperature=temperature, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
             log_probs_lst.append(log_probs)
             if calculate_entropy:
                 entropy_lst.append(entropy)
@@ -223,7 +222,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
-        return log_probs, entropys  # loss_per_sample is stored in old_log_probs field
+        return entropys, log_probs, loss_per_sample
 
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):

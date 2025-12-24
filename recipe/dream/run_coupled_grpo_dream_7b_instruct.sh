@@ -11,6 +11,10 @@ export HF_HOME=
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # arguments parsing
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -198,7 +202,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     +actor_rollout_ref.actor.baseline=$baseline \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
-    +actor_rollout_ref.rollout.use_cache=False \
+    +actor_rollout_ref.rollout.use_cache=True \
     +actor_rollout_ref.rollout.dual_cache=False \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.rollout.n=$n_rollout \

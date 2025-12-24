@@ -31,11 +31,19 @@ def main(config):
 def run_ppo(config) -> None:
     if not ray.is_initialized():
         # this is for local ray cluster
-        ray.init(
-            runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN",
-             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
-            num_cpus=config.ray_init.num_cpus,
-        )
+        if config.actor_rollout_ref.model.name in ['sdar']:
+            ray.init(
+                address="127.0.0.1:6379",
+                runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN",
+                "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
+            )
+        else:
+            ray.init(
+                runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN",
+                "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
+                num_cpus=config.ray_init.num_cpus,
+            )
+
 
     runner = TaskRunner.remote()
     ray.get(runner.run.remote(config))
@@ -77,7 +85,8 @@ class TaskRunner:  # Encapsulate main training logic
             from verl.single_controller.ray import RayWorkerGroup
             from verl.workers.fsdp_workers import CriticWorker
             from verl.workers.dllm_fsdp_workers import DLLMActorRolloutRefWorker  # !!! We have not yet adapted dLLM to AsyncActorRolloutRefWorker !!!
-            
+
+
             actor_rollout_cls = DLLMActorRolloutRefWorker
             ray_worker_group_cls = RayWorkerGroup
 

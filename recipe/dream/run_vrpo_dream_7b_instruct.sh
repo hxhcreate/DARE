@@ -11,6 +11,10 @@ export HF_HOME=
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # arguments parsing
 while [[ $# -gt 0 ]]; do
   key="$1"

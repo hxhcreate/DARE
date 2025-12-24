@@ -148,6 +148,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():
                 actor_module_class = AutoModelForVision2Seq
             else:
+                # actor_module_class = AutoModelForCausalLM # AutoModel
                 model_name = self.config.model.name
                 if model_name in ["sdar"]:
                     actor_module_class = AutoModelForCausalLM
@@ -206,7 +207,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     'lora_alpha': self.config.model.lora_alpha,
                     'target_modules': convert_to_regular_types(self.config.model.target_modules),
                     'bias': "none",
-                    'lora_dropout': self.config.model.lora_dropout,  # LNY: add dropout
+                    # 'lora_dropout': self.config.model.lora_dropout,  # LNY: add dropout
                 }
                 actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
                 actor_module.print_trainable_parameters()
@@ -377,7 +378,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     rollout = FASTDLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
                     rollout_sharding_manager = BaseShardingManager()
                     # TODO: a sharding manager that do nothing?
-
+            
         elif rollout_name == "vllm":    # !!! We have not yet adapted dLLM to vllm !!!
             from verl.workers.rollout.vllm_rollout import vllm_mode, vLLMRollout
             from verl.workers.sharding_manager.fsdp_vllm import FSDPVLLMShardingManager
@@ -466,29 +467,31 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After building sharding manager", logger=logger)
 
         elif rollout_name == "lmdeploy":
-            from verl.workers.rollout.lmdeploy_rollout import LMDeployRollout
-            from verl.workers.sharding_manager.fsdp_lmdeploy import FSDPLMDeployhardingManager
+            assert self.config.model.name == 'sdar', "lmdeploy rollout only supports sdar model currently"
+            from verl.workers.rollout.lmdeploy_rollout.lmdeploy_rollout_server import LMDeployRollout
+            from verl.workers.sharding_manager.fsdp_lmdeploy_server import FSDPLMDeployShardingManager
 
             log_gpu_memory_usage(f"Before building {rollout_name} rollout", logger=logger)
             local_path = copy_to_local(self.config.model.path, use_shm=self.config.model.get('use_shm', False))
+            print(f"Initializing lmdeploy engine with model_path={local_path}")
             lora_kwargs = {'lora_kwargs': {"enable_lora":True, "max_loras":1, "max_lora_rank":self._lora_rank}} if self._is_lora else {}
             rollout = LMDeployRollout(
-                actor_module=local_path,
+                model_path=local_path,
                 config=self.config.rollout,
                 tokenizer=self.tokenizer,
+                device_mesh=rollout_device_mesh,
                 **lora_kwargs)
-        
+
             log_gpu_memory_usage(f"After building {rollout_name} rollout", logger=logger)
             full_params = torch.distributed.get_world_size() == 1
-            rollout_sharding_manager = FSDPLMDeployhardingManager(
+            rollout_sharding_manager = FSDPLMDeployShardingManager(
                 module=self.actor_module_fsdp,
-                inference_engine=rollout.inference_engine,
+                # engine=rollout.engine,
+                # engine_instance=rollout.engine_instance,
                 model_config=self.actor_model_config,
                 full_params=full_params,
                 device_mesh=rollout_device_mesh,
                 offload_param=self._is_offload_param,
-                load_format=self.config.rollout.load_format,
-                layered_summon=self.config.rollout.get('layered_summon', False),
             )
             log_gpu_memory_usage("After building sharding manager", logger=logger)
 
@@ -507,10 +510,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 from verl.workers.actor.llada_dp_actor_bgpo import DLLMDataParallelPPOActor
             elif self.config.algorithm.name == 'd1':
                 from verl.workers.actor.llada_dp_actor_d1 import DLLMDataParallelPPOActor
-            elif self.config.algorithm.name == 'vrpo':
-                from verl.workers.actor.llada_dp_actor_vrpo import DLLMDataParallelPPOActor
             else:
                 raise NotImplementedError
+            
         elif self.config.model.name == 'dream':
             if self.config.algorithm.name == 'spg':
                 from verl.workers.actor.dream_dp_actor_spg import DLLMDataParallelPPOActor
@@ -522,9 +524,12 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 from verl.workers.actor.dream_dp_actor_bgpo import DLLMDataParallelPPOActor
             elif self.config.algorithm.name == 'd1':
                 from verl.workers.actor.dream_dp_actor_d1 import DLLMDataParallelPPOActor
-            elif self.config.algorithm.name == 'vrpo':
-                # TODO: implement dream vrpo actor
-                from verl.workers.actor.dream_dp_actor_vrpo import DLLMDataParallelPPOActor
+            else:
+                raise NotImplementedError
+            
+        elif self.config.model.name == 'sdar':
+            if self.config.algorithm.name == 'bgpo':
+                from verl.workers.actor.sdar_dp_actor_bgpo import DLLMDataParallelPPOActor
             else:
                 raise NotImplementedError
         # This is used to import external_lib into the huggingface systems
@@ -587,7 +592,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 self.config.actor.use_fused_kernels = use_fused_kernels
             self.actor = DLLMDataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
 
-        if self._is_rollout and not self.config.algorithm.name in ["vrpo"]:
+        if self._is_rollout:
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
 
         if self._is_ref:
@@ -602,7 +607,6 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 trust_remote_code=self.config.model.get("trust_remote_code", False),
                 use_liger=self.config.model.get("use_liger", False),
                 role="ref",
-                attn_implementation=self.config.model.get("attn_implementation", "eager"),  
             )[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
@@ -675,6 +679,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             "pad_token_id": self.generation_config.pad_token_id if self.generation_config is not None else self.tokenizer.pad_token_id,
         }
         prompts.meta_info.update(meta_info)
+
         with self.rollout_sharding_manager:
             log_gpu_memory_usage("After entering rollout sharding manager", logger=logger)
 
@@ -684,7 +689,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After rollout generation", logger=logger)
 
             output = self.rollout_sharding_manager.postprocess_data(output)
-
+            
         output = output.to("cpu")
 
         # clear kv cache
@@ -704,25 +709,13 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         """
         batch = prompts.batch
         # Extract data from batch
-        
-        if self.config.algorithm.name in ["vrpo"]:
-            batch = TensorDict()
-            response_length = prompts.meta_info["response_length"]
-            batch["input_ids"] = prompts.batch["input_ids"]
-            batch['prompts'] = batch["input_ids"][:, : - response_length]
-            batch['responses'] = batch["input_ids"][:, - response_length:]
-            batch["attention_mask"] = prompts.batch["attention_mask"]
-            batch["position_ids"] = batch["attention_mask"].cumsum(dim=-1) - 1
-
         idx_repeat = batch["prompts"]  # (batch_size * n_rollout, prompt_len)
         responses = batch["responses"]  # (batch_size * n_rollout, response_len)
         input_ids = batch["input_ids"]  # (batch_size * n_rollout, seq_len)
         attention_mask = batch["attention_mask"]  # (batch_size * n_rollout, seq_len)
         position_ids = batch["position_ids"]  # Complete position_ids, prompt is left-padded, response is right-padded
+        response_length = self.config.rollout.get("response_length")
         total_batch_size  = input_ids.shape[0]
-        
-        if self.config.algorithm.name not in ["vrpo"]:
-            response_length = self.config.rollout.get("response_length")
 
         # Get parameters from rollout config
         n_l = self.config.actor.get("n_l", 1)
@@ -730,7 +723,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         MASK_TOKEN_ID = self.actor_module_fsdp.config.mask_token_id
 
         # select _forward_process according to algorithm
-        if self.config.algorithm.name in ["d1", "bgpo", "coupled-grpo", "vrpo"]:
+        if self.config.algorithm.name in ["d1", "bgpo", "coupled-grpo"]:
             if self.config.algorithm.name == "d1":
                 assert n_l == mc_num == 1, "d1 method requires n_l == mc_num == 1"
                 from verl.trainer.ppo.dllm_core_algos import _forward_process_d1 as _forward_process
@@ -739,10 +732,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 from verl.trainer.ppo.dllm_core_algos import _forward_process_coupled_grpo as _forward_process
             elif self.config.algorithm.name == "bgpo":
                 from verl.trainer.ppo.dllm_core_algos import _forward_process_bgpo as _forward_process
-            elif self.config.algorithm.name == "vrpo":
-                assert n_l == mc_num, "vrpo allocates the full budget to timesteps, requires n_l == mc_num"
-                from verl.trainer.ppo.dllm_core_algos import _forward_process_vrpo as _forward_process
-            
+
             batch_size, seq_len = input_ids.shape
             prompt_len = seq_len - response_length  # int
             device = input_ids.device
@@ -856,9 +846,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
-                output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
+                old_entropys, old_log_probs, old_loss_per_sample = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
             output = DataProto.from_dict(
-                tensors={"old_log_probs": output, "entropys": entropys},
+                tensors={"old_log_probs": old_log_probs, "old_loss_per_sample": old_loss_per_sample, "entropys": old_entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
             output = self.ulysses_sharding_manager.postprocess_data(output)
@@ -873,28 +863,5 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during compute_log_prob", logger=logger)
-
-        return output
-    
-    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
-    def compute_policy_loss_for_validation(self, data: DataProto):
-        assert self._is_actor
-        if self._is_offload_param:
-            load_fsdp_model_to_gpu(self.actor_module_fsdp)
-
-        data = data.to(get_torch_device().current_device())
-
-        with self.ulysses_sharding_manager:
-            data = self.ulysses_sharding_manager.preprocess_data(data=data)
-            # perform training
-            metrics = self.actor.compute_policy_loss(data=data)
-
-            output = DataProto(meta_info={"metrics": metrics})
-            output = self.ulysses_sharding_manager.postprocess_data(data=output)
-            output = output.to("cpu")
-
-        if self._is_offload_param:
-            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
-            log_gpu_memory_usage("After offload actor model during update_actor", logger=logger)
 
         return output

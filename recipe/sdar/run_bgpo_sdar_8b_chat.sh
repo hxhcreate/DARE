@@ -1,19 +1,6 @@
 #!/bin/bash
+set -euo pipefail
 set -x
-export HYDRA_FULL_ERROR=1
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
-export WANDB_RESUME="allow"
-export WANDB_MODE="offline"
-export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
-export HF_HUB_OFFLINE=1
-export TORCHDYNAMO_DISABLE=1
-
-echo "[INFO] Cleaning up old Ray..."
-ray stop --force || true
-rm -rf /tmp/ray || true
 
 # arguments parsing
 while [[ $# -gt 0 ]]; do
@@ -45,10 +32,67 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-algorithm=${algorithm:-d1}
-model=${model:-dream}
-model_path=${model_path:-models/Dream-v0-Instruct-7B}
-engine=${engine:-hf}
+# clean up old ray
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
+# start up ray head
+echo "[INFO] Starting Ray head..."
+ray start --head \
+  --node-ip-address=127.0.0.1 \
+  --port=6379 \
+  --num-gpus=8 \
+  --num-cpus=128
+
+# start up lmdeploy server
+echo "[INFO] Starting lmdeploy server on GPU 0..."
+# lmdeploy setting
+MODEL_PATH=${model_path:-models/SDAR-8B-Chat}
+SERVER_PORT=23333
+LMDEPLOY_EXECUTOR_BACKEND="ray"
+LMDEPLOY_ENGINE_BACKEND="pytorch"
+CACHE_MAX_ENTRY_COUNT=0.5
+SESSION_LEN=2048
+BLOCK_LENGTH=4
+UNMASKING_STRATEGY="low_confidence_dynamic"
+DENOISING_STEPS=4
+CONFIDENCE_THRESHOLD=0.9
+export CUDA_VISIBLE_DEVICES=0
+export LMDEPLOY_EXECUTOR_BACKEND=${LMDEPLOY_EXECUTOR_BACKEND}
+
+lmdeploy serve api_server "${MODEL_PATH}" \
+  --backend ${LMDEPLOY_ENGINE_BACKEND} \
+  --server-port ${SERVER_PORT} \
+  --cache-max-entry-count ${CACHE_MAX_ENTRY_COUNT} \
+  --session-len ${SESSION_LEN} \
+  --dllm-block-length ${BLOCK_LENGTH} \
+  --dllm-unmasking-strategy "${UNMASKING_STRATEGY}" \
+  --dllm-denoising-steps ${DENOISING_STEPS} \
+  --dllm-confidence-threshold ${CONFIDENCE_THRESHOLD} &
+
+LMDEPLOY_PID=$!
+echo "[INFO] lmdeploy PID: ${LMDEPLOY_PID}"
+
+# wait lmdeploy server to be ready
+sleep 5
+
+export HYDRA_FULL_ERROR=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
+export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
+export WANDB_PROJECT="DARE"
+export WANDB_API_KEY=
+export WANDB_RESUME="allow"
+export WANDB_MODE="offline"
+export HF_HOME=
+export HF_HUB_OFFLINE=1
+export TORCHDYNAMO_DISABLE=1
+
+
+algorithm=${algorithm:-bgpo}
+model=${model:-sdar}
+model_path=${model_path:-models/SDAR-8B-Chat}
+engine=${engine:-lmdeploy}
 
 # validate task
 valid_tasks=("math" "code" "sudoku" "countdown")
@@ -87,30 +131,28 @@ baseline="${model}-${task}-${algorithm}-${engine}"
 if [ $task == "math" ]; then
     train_files="['data/preprocessed/rl/train/math_1.parquet','data/preprocessed/rl/train/gsm8k_1.parquet']"
     val_files="['data/preprocessed/rl/test/math500_1.parquet','data/preprocessed/rl/test/gsm8k_1.parquet']"
+    train_files="['data/preprocessed/rl/train/gsm8k_1.parquet']"
+    val_files="['data/preprocessed/rl/test/gsm8k_1.parquet']"
     max_prompt_length=512
     max_response_length=512
-    num_diffusion_steps=$((max_response_length / 2))
     total_epoch=1
 elif [ $task == "code" ]; then
     train_files="['data/preprocessed/rl/train/lcbv5-K8_1.parquet','data/preprocessed/rl/train/primeintellect-K8_1.parquet','data/preprocessed/rl/train/taco-K8_1.parquet']"
     val_files="['data/preprocessed/rl/test/mbpp_1.parquet','data/preprocessed/rl/test/humaneval_1.parquet','data/preprocessed/rl/test/humanevalplus_1.parquet']"
     max_prompt_length=1024
     max_response_length=512
-    num_diffusion_steps=$max_response_length
     total_epoch=5
 elif [ $task == "countdown" ]; then
     train_files="['data/preprocessed/rl/train/countdown-n20000_1.parquet']"
     val_files="['data/preprocessed/rl/test/countdown_1.parquet']"
     max_prompt_length=512
     max_response_length=256
-    num_diffusion_steps=$((max_response_length / 2))
     total_epoch=1
 elif [ $task == "sudoku" ]; then
     train_files="['data/preprocessed/rl/train/sudoku-n20000_1.parquet']"
     val_files="['data/preprocessed/rl/test/sudoku_1.parquet']"
     max_prompt_length=512
     max_response_length=256
-    num_diffusion_steps=$((max_response_length / 2))
     total_epoch=1
 fi
 
@@ -136,25 +178,30 @@ esac
 
 # parameters setting
 n_gpus_per_node=$(echo $CUDA_VISIBLE_DEVICES | tr "," "\n" | wc -l)
-batch_size=16  # batch_size must be greater than the number of GPUs used
+batch_size=14  # batch_size must be greater than the number of GPUs used
 n_rollout=8
 lr=5e-7
 ppo_micro_batch_size_per_gpu=1  # gradient accumulation = batch_size / ppo_micro_batch_size_per_gpu
-train_temperature=0.6
+train_temperature=1.0
+algorithm="bgpo"
+fsdp_size=-1
+rollout_tensor_parallel_size=1
 
 # diffusion related parameters
-val_num_diffusion_steps=$max_response_length
-block_length=32
-mc_num=1
-n_l=1
+val_num_diffusion_steps=4
+num_diffusion_steps=4
+block_length=4
+mc_num=8
+n_l=8
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
 exp_name="${baseline}-bsz${batch_size}-n${n_rollout}-prompt${max_prompt_length}-response${max_response_length}-step${num_diffusion_steps}-lr${lr}-temp${train_temperature}-n_l${n_l}-mc_num${mc_num}-gpu${n_gpus_per_node}-${timestamp}"
-ckpt_dir=/mnt/shared-storage-user/ai4good1-share/yangjingyi/models/${project_name}/${exp_name}
-log_dir=/mnt/shared-storage-user/yangjingyi/BGPO/logs/${project_name}/${exp_name}
+ckpt_dir=./ckpts/${project_name}/${exp_name}
+log_dir=./logs/${project_name}/${exp_name}
 mkdir -p ${ckpt_dir}
 mkdir -p ${log_dir}
+
 
 python3 -m verl.trainer.dllm_main_ppo \
     algorithm.adv_estimator=grpo \
@@ -171,8 +218,9 @@ python3 -m verl.trainer.dllm_main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation="error" \
     data.trust_remote_code=True \
+    data.return_raw_chat=True \
     +actor_rollout_ref.algorithm.name=${algorithm} \
-    +actor_rollout_ref.model.name=$model \
+    +actor_rollout_ref.model.name=${model} \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \
@@ -194,23 +242,28 @@ python3 -m verl.trainer.dllm_main_ppo \
     +actor_rollout_ref.model.baseline=$baseline \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    +actor_rollout_ref.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=[DreamDecoderLayer] \
+    actor_rollout_ref.actor.fsdp_config.fsdp_size=$fsdp_size \
+    +actor_rollout_ref.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=[SDARDecoderLayer] \
     +actor_rollout_ref.actor.mc_num=$mc_num \
     +actor_rollout_ref.actor.n_l=$n_l \
     +actor_rollout_ref.actor.cfg_scale=0.0 \
     +actor_rollout_ref.actor.baseline=$baseline \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.name=hf \
-    +actor_rollout_ref.rollout.use_cache=True \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=$rollout_tensor_parallel_size \
+    actor_rollout_ref.rollout.name=lmdeploy \
+    +actor_rollout_ref.rollout.max_new_tokens=$max_response_length \
+    +actor_rollout_ref.rollout.use_cache=False \
     +actor_rollout_ref.rollout.dual_cache=False \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.rollout.n=$n_rollout \
     actor_rollout_ref.rollout.temperature=$train_temperature \
+    actor_rollout_ref.rollout.top_k=50 \
+    actor_rollout_ref.rollout.top_p=1.0 \
     actor_rollout_ref.rollout.do_sample=True \
-    actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
-    actor_rollout_ref.rollout.val_kwargs.temperature=0.0 \
-    actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
+    actor_rollout_ref.rollout.val_kwargs.temperature=0. \
+    actor_rollout_ref.rollout.val_kwargs.top_p=1.0 \
+    actor_rollout_ref.rollout.val_kwargs.top_k=-1 \
+    actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     +actor_rollout_ref.rollout.val_kwargs.num_diffusion_steps=$val_num_diffusion_steps \
     actor_rollout_ref.rollout.max_num_batched_tokens=11000 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
@@ -226,6 +279,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     trainer.project_name=$project_name \
     trainer.experiment_name=$exp_name \
     trainer.val_before_train=True \
+    +trainer.val_only=False \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.nnodes=1 \
     trainer.default_local_dir=$ckpt_dir \
@@ -235,9 +289,18 @@ python3 -m verl.trainer.dllm_main_ppo \
     custom_reward_function.path="verl/utils/reward_score/__init__.py" \
     custom_reward_function.name="dllm_rm" 
     # \
+    # actor_rollout_ref.model.lora_rank=32 \
+    # actor_rollout_ref.model.lora_alpha=16 \
+    # actor_rollout_ref.model.target_modules=all-linear 
+    # \
+    # >> ${log_dir}/${baseline}-${timestamp}.log 2>&1 &
+
     # >> ${log_dir}/${baseline}-${timestamp}.out \
     # 2>> ${log_dir}/${baseline}-${timestamp}.err &
 
+echo "[INFO] Training finished, stopping lmdeploy..."
+kill -9 ${LMDEPLOY_PID}
+pkill -f "ray"
 # reward_model.reward_manager=dllm: used to select reward_manager in dllm_reward.load_reward_manager()
 # llada does not support gradient_checkpointing
 # custom_reward_function.name: stored as self.reward_fn, will be called using compute_reward() in ray_trainer
