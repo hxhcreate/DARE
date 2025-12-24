@@ -17,16 +17,28 @@
 
 ## 🎯 Overview
 
-We introduce DARE (dLLM Alignment and Reinforcement Executor), a flexible and efficient supervised-finetuning (SFT) and reinforcement learning (RL) training framework designed specifically for diffusion large language models (dLLMs). DARE also integrates a comprehensive evaluation platform.
+We introduce **DARE** (**d**LLM **A**lignment and **R**einforcement **E**xecutor), a flexible and efficient supervised-finetuning (SFT) and reinforcement learning (RL) training framework designed specifically for diffusion large language models (dLLMs). DARE also integrates dLLMs into a comprehensive evaluation platform.
 
 DARE aims to be both flexible and user-friendly to use with:
 - Easy extension of diverse RL algorithms for dLLMs
-- Easy extension of comprehensive benchmark evaluations for dLLMs
-- Seamless integration of existing and upcoming dLLM infras, ensuring compatibility and ease of use
-- Ready integration with popular HuggingFace dLLMs
+- Easy extension of extra benchmark evaluations for dLLMs
+- Easy integration of existing and upcoming dLLM infras, ensuring compatibility and ease of use
+- Ready integration with popular and upcoming HuggingFace dLLMs
 
-DARE is still work in progress, we are considering supporting more models and algorithm for training and evaluation. We warmly welcome the research community in this direction for their collaborations, feedback and suggestions. Let's make diffusion large language model great!!!👊
+DARE still work in progress, we plan to support more models and algorithm for training and evaluation. **We warmly welcome the research community to collaborations, give feedback and share suggestions.** Let's advance the development of diffusion large language models together !!!👊
 
+**Optimization Plan in RL Pipeline**
+- For MDLMs like LLaDA/Dream: We decouple the attention backend used during training from that used during rollout for acceleration. During rollout we require batching and KV-cache acceleration, so we choose `flash_attn_func` or `flash_attn_with_kvcache`, whereas during training we adopt `flash_attn_varlen_func` to reduce meaningless computation on padding tokens. The entire pipeline will be accelerated by approximately **4×**.
+
+<p align="center">
+  <img src="assets/optimization_plan_mdlm.png" style="max-width:75%; height:auto;">
+</p>
+
+- For BDLMs like SDAR: We leverage the compatible lmdeploy inference engine to accelerate rollout and adopt `fused_linear_cross_entropy` (logits-free) provided by SDAR to reduce GPU memory usage; the rollout (behavior) policy also supports live update of weights. The entire pipeline will be accelerated more than **14×**.
+
+<p align="center">
+  <img src="assets/optimization_plan_bdlm.png" style="max-width:75%; height:auto;">
+</p>
 
 ## 📢 News
 - [2025-12-24]: Support online rl (online weight update of rollout) for SDAR.
@@ -60,7 +72,7 @@ DARE is still work in progress, we are considering supporting more models and al
   - Block cache ([Fast-dLLM](https://github.com/NVlabs/Fast-dLLM)) for LLaDAs and Dreams 2.2x faster rollout
   - Inference engine ([lmdeploy](https://github.com/InternLM/lmdeploy)) for SDARs 2-4× faster rollout
 - **Parallelism for dLLMs**
-  - Support sequence_parallel
+  - Support sequence parallel
 - **Attention Backend**
   - Support flash_attn
   - Support flash_attn_varlen
@@ -285,7 +297,13 @@ If you want to add more benchmarks, models, or custom datasets, please refer to 
 
 ## 📧 Contact
 
-For any questions or collaboration inquiries, feel free to reach out Jingyi Yang at: [yangjingyi946@gmail.com](yangjingyi946@gmail.com)
+For any questions or collaboration inquiries, feel free to reach out Jingyi Yang at: [yangjingyi946@gmail.com](yangjingyi946@gmail.com).
+
+
+## 👷‍♂️ Contributor
+
+Waiting for your joining and contribution.
+
 
 
 ## 📚 Citation
