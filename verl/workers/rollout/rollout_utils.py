@@ -677,6 +677,7 @@ def execute_dream_generation(
     temperature = gen_kwargs["temperature"]
     remasking = gen_kwargs["remasking"]
     mask_id = gen_kwargs["mask_id"]
+    do_sample = gen_kwargs["do_sample"]
 
     batch_start_time = time.time()
 
@@ -692,6 +693,7 @@ def execute_dream_generation(
         alg="entropy",
         alg_temp=0.0,
         mask_token_id=mask_id,
+        do_sample=do_sample,
     )
 
     try:
@@ -787,6 +789,7 @@ def execute_fastdream_generation(
     temperature = gen_kwargs["temperature"]
     remasking = gen_kwargs["remasking"]
     mask_id = gen_kwargs["mask_id"]
+    do_sample = gen_kwargs["do_sample"]
 
     batch_start_time = time.time()
 
@@ -802,6 +805,7 @@ def execute_fastdream_generation(
         alg="entropy",
         alg_temp=0.0,
         mask_token_id=mask_id,
+        do_sample=do_sample,
     )
 
     try:
@@ -816,3 +820,32 @@ def execute_fastdream_generation(
     )
     
     return responses, full_input_ids, attention_mask, answers
+
+
+def process_sdar_generation_outputs(
+    outputs: torch.Tensor,
+    idx_repeat: torch.Tensor,
+    tokenizer,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[List[str]]]:
+    # Process real data
+    prompt_length = idx_repeat.size(1)
+    
+    # 1. Extract Responses
+    # outputs structure is [Prompt, Response]
+    # We slice from prompt_length to the end to get responses
+    batch_responses = outputs[:, prompt_length:]
+
+    # 4. Extract Answers
+    batch_answers = []
+    
+    # Use batch_decode for efficiency
+    decoded_responses = tokenizer.batch_decode(batch_responses, skip_special_tokens=True)
+    for response_str in decoded_responses:
+        boxed_matches = re.findall(r"\\boxed{([^{}]*(?:\{[^{}]*\}[^{}]*)*)}", response_str, re.DOTALL)
+        answer_matches = re.findall(r"<answer>(.*?)</answer>", response_str, re.DOTALL)
+        
+        answers = list(set(boxed_matches + answer_matches))  # Merge and deduplicate
+        batch_answers.append(answers)
+    
+    
+    return batch_answers
