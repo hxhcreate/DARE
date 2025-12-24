@@ -58,8 +58,8 @@ case "${task}" in
     work_dir=outputs/${prefix}sdar_8b_chat_gen_mmlu_length128
     ;;
   mmlupro)
-    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_mmlupro_length128.py
-    work_dir=outputs/${prefix}sdar_8b_chat_gen_mmlupro_length128
+    py_script=sdar_examples/${prefix}sdar_8b_chat_gen_mmlupro_length2048.py
+    work_dir=outputs/${prefix}sdar_8b_chat_gen_mmlupro_length2048
     ;;
   hellaswag)
     py_script=sdar_examples/${prefix}sdar_8b_chat_gen_hellaswag_length128.py

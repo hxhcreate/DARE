@@ -22,14 +22,16 @@ We introduce DARE (dLLM Alignment and Reinforcement Executor), a flexible and ef
 DARE aims to be both flexible and user-friendly to use with:
 - Easy extension of diverse RL algorithms for dLLMs
 - Easy extension of comprehensive benchmark evaluations for dLLMs
-- Seamless integration of existing and upcoming dLLM infras with modular APIs, ensuring compatibility and ease of use
+- Seamless integration of existing and upcoming dLLM infras, ensuring compatibility and ease of use
 - Ready integration with popular HuggingFace dLLMs
 
-DARE is still work in progress. We are considering supporting more models and algorithm for training and evaluation.
+DARE is still work in progress, we are considering supporting more models and algorithm for training and evaluation. We warmly welcome the research community in this direction for their collaborations, feedback and suggestions. Let's make diffusion large language model great!!!👊
 
 
 ## 📢 News
-- [2025-12-01]: We open-sourced our codebase of DARE, including training and evaluation with faster inference for dLLM. **DARE is still work in progress, we warmly welcome the research community in this direction for their collaborations, feedback and suggestions. Let's make diffusion large language model great!!!👊**
+- [2025-12-08]: Support Coupled-GRPO, CJ-GRPO and SPG algorithm.
+- [2025-12-03]: Support sequence parallel for several dLLMs (LLaDA/Dream).
+- [2025-12-01]: We initialize the codebase of DARE (dLLM Alignment and Reinforcement Executor), including faster SFT/RL (d1, BGPO) training (LLaDA/Dream) and evaluation (LLaDA/Dream/SDAR).
 
 
 ## 🔍 Catalogue
@@ -53,15 +55,17 @@ DARE is still work in progress. We are considering supporting more models and al
   - Block cache ([Fast-dLLM](https://github.com/NVlabs/Fast-dLLM)) for LLaDAs and Dreams 2.2x faster rollout
   - Inference engine ([lmdeploy](https://github.com/InternLM/lmdeploy)) for SDARs 2-4× faster rollout
 - **Parallelism for dLLMs**
+  - Support sequence_parallel
+- **Attention Backend**
   - Support flash_attn
   - Support flash_attn_varlen
   - Support flash_attn_with_kvcache
-  - Support sequence_parallel
-- **Comprehensive Evaluation for dLLMs**
-  - Integrate [opencompass](https://github.com/open-compass/opencompass) framework with faster evaluation
 - **Model Diversity**
   - dLLM that trained from scratch (e.g., LLaDA)
   - dLLM that continuous trained from AR, i.e., AR-to-Diffusion (e.g., Dream, SDAR)
+  - Masked diffusion language models (e.g., LLaDA/Dream), block diffusion language model (e.g., SDAR)
+- **Comprehensive Evaluation for dLLMs**
+  - Integrate  faster dLLM evaluation in [opencompass](https://github.com/open-compass/opencompass)
 - **Upcoming Features**
   - Support [sglang](https://github.com/sgl-project/sglang) inference engine, MoE, Multi-Modal, Omni, etc.
 
@@ -89,10 +93,11 @@ conda activate DARE
 # Install dependencies
 cd DARE
 pip install -r requirements.txt
-pip install flash-attn==2.7.4.post1 --no-build-isolation
-# or 
+pip install flash-attn==2.8.3 --no-build-isolation
+# or (Recommend)
 # install from whl
-# pip install flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# pip install flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 ```
 
 Build evaluation vitual environment:
@@ -255,12 +260,12 @@ If you want to add more benchmarks, models, or custom datasets, please refer to 
 
 ## 📈 Performance
 
-**Baseline**
+**Evaluation Result Reproduction**
 
 | Bench\Model | LLaDA-8B-Instruct | LLaDA-8B-Instruct + Fast-dLLM | Dream-7B-Instruct | SDAR-8B-Chat | SDAR-8B-Chat + lmdeploy |
 |-------|------------|------------------------|-------|------------|------------------------|
 | **MMLU** | 65.24 | 65.17 | 66.83 | 75.40 |  |
-| **MMLU-Pro** | 36.82 | 34.58 | 31.89 |  |  |
+| **MMLU-Pro** | 36.82 | 34.58 | 31.89 | 52.07 |  |
 | **Hellaswag** | 75.30 | 74.41 | 63.23 | 67.67 | 87.59 |
 | **ARC-C** | 87.80 | 87.80 | 81.36 | 69.83 | 86.78 |
 | **GSM8k** | 79.68 | 78.39 | 83.24 | 88.10 | 87.95 |
