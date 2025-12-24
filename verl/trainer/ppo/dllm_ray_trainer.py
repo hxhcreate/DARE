@@ -1,17 +1,3 @@
-# Copyright 2025 Shanghai AI Lab
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from verl.trainer.ppo.ray_trainer import *
 from verl.trainer.ppo.ray_trainer import _timer
 from verl.trainer.ppo.dllm_metric_utils import (
@@ -250,11 +236,12 @@ class DLLMRayPPOTrainer(RayPPOTrainer):
                             reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
 
                     if self.config.algorithm.name in ["d1", "coupled-grpo", "bgpo", "spg"]:
-                        with _timer("forward_process", timing_raw):
-                            forward_batch_output = self.actor_rollout_wg.forward_process(batch)
-                        batch = batch.union(forward_batch_output)
-                        # recompute old_log_probs
-                        if self.config.algorithm.name in ["d1", "coupled-grpo", "bgpo"]:
+                        if self.config.actor_rollout_ref.model.name != "sdar":
+                            with _timer("forward_process", timing_raw):
+                                forward_batch_output = self.actor_rollout_wg.forward_process(batch)
+                            batch = batch.union(forward_batch_output)
+                        if self.config.algorithm.name in ["bgpo"]:
+                            # recompute old_log_probs
                             with _timer("old_log_prob", timing_raw):
                                 old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
                                 entropys = old_log_prob.batch["entropys"]
@@ -289,13 +276,85 @@ class DLLMRayPPOTrainer(RayPPOTrainer):
                                             "training/rollout_probs_diff_std": rollout_probs_diff_std.detach().item(),
                                         }
                                     )
+                        elif self.config.algorithm.name in ["d1", "coupled-grpo"]:
+                            # recompute old_log_probs
+                            with _timer("old_log_prob", timing_raw):
+                                old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                                entropys = old_log_prob.batch["entropys"]
+                                response_masks = batch.batch["mask_indices"][:, :, -batch.batch["response_mask"].shape[-1]:]
+                                loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                                entropy_loss = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                                old_log_prob_metrics = {"actor/entropy_loss": entropy_loss.detach().item()}
+                                metrics.update(old_log_prob_metrics)
+                                old_log_prob.batch.pop("entropys")
+                                batch = batch.union(old_log_prob)
+
+                                if "rollout_log_probs" in batch.batch.keys():
+                                    # TODO: we may want to add diff of probs too.
+                                    rollout_old_log_probs = batch.batch["rollout_log_probs"]
+                                    actor_old_log_probs = batch.batch["old_log_probs"]
+                                    attention_mask = batch.batch["attention_mask"]
+                                    responses = batch.batch["responses"]
+                                    response_length = responses.size(1)
+                                    response_mask = attention_mask[:, -response_length:]
+
+                                    rollout_probs = torch.exp(rollout_old_log_probs)
+                                    actor_probs = torch.exp(actor_old_log_probs)
+                                    rollout_probs_diff = torch.abs(rollout_probs - actor_probs)
+                                    rollout_probs_diff = torch.masked_select(rollout_probs_diff, response_mask.bool())
+                                    rollout_probs_diff_max = torch.max(rollout_probs_diff)
+                                    rollout_probs_diff_mean = torch.mean(rollout_probs_diff)
+                                    rollout_probs_diff_std = torch.std(rollout_probs_diff)
+                                    metrics.update(
+                                        {
+                                            "training/rollout_probs_diff_max": rollout_probs_diff_max.detach().item(),
+                                            "training/rollout_probs_diff_mean": rollout_probs_diff_mean.detach().item(),
+                                            "training/rollout_probs_diff_std": rollout_probs_diff_std.detach().item(),
+                                        }
+                                    )
                         else:
                             batch.meta_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
-                            
+                    
                     elif self.config.algorithm.name == "cj-grpo":
-                        pass
+                        # recompute old_log_probs
+                        with _timer("old_log_prob", timing_raw):
+                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                            entropys = old_log_prob.batch["entropys"]
+                            response_masks = batch.batch["reversed_traj_unmask_positions"]
+                            loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                            entropy_loss = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                            old_log_prob_metrics = {"actor/entropy_loss": entropy_loss.detach().item()}
+                            metrics.update(old_log_prob_metrics)
+                            old_log_prob.batch.pop("entropys")
+                            batch = batch.union(old_log_prob)
+
+                            if "rollout_log_probs" in batch.batch.keys():
+                                # TODO: we may want to add diff of probs too.
+                                rollout_old_log_probs = batch.batch["rollout_log_probs"]
+                                actor_old_log_probs = batch.batch["old_log_probs"]
+                                attention_mask = batch.batch["attention_mask"]
+                                responses = batch.batch["responses"]
+                                response_length = responses.size(1)
+                                response_mask = attention_mask[:, -response_length:]
+
+                                rollout_probs = torch.exp(rollout_old_log_probs)
+                                actor_probs = torch.exp(actor_old_log_probs)
+                                rollout_probs_diff = torch.abs(rollout_probs - actor_probs)
+                                rollout_probs_diff = torch.masked_select(rollout_probs_diff, response_mask.bool())
+                                rollout_probs_diff_max = torch.max(rollout_probs_diff)
+                                rollout_probs_diff_mean = torch.mean(rollout_probs_diff)
+                                rollout_probs_diff_std = torch.std(rollout_probs_diff)
+                                metrics.update(
+                                    {
+                                        "training/rollout_probs_diff_max": rollout_probs_diff_max.detach().item(),
+                                        "training/rollout_probs_diff_mean": rollout_probs_diff_mean.detach().item(),
+                                        "training/rollout_probs_diff_std": rollout_probs_diff_std.detach().item(),
+                                    }
+                                )
+                    
                     elif self.config.algorithm.name == "mdpo":
                         pass
+                    
                     else:
                         NotImplementedError(f"Unsupported algorithm: {self.config.algorithm.name}")
 
