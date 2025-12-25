@@ -31,7 +31,7 @@ import time
 from verl import DataProto
 
 from verl.workers.rollout.base import BaseRollout
-from .rollout_utils import execute_fastcjladda_generation
+from .rollout_utils import execute_fastcjllada_generation
 
 __all__ = ["DLLMRollout"]
 
@@ -109,7 +109,7 @@ class FASTDLLMRollout(BaseRollout):
         MAX_MODEL_LENGTH = self.config.max_num_batched_tokens  # Maximum length of packed sequences
         total_batch_size = batch_size * n_rollout
 
-        responses, reversed_traj, reversed_traj_unmask_positions, full_input_ids, attention_mask, answers = execute_fastcjladda_generation(
+        responses, reversed_traj, reversed_traj_unmask_positions, full_input_ids, attention_mask, answers = execute_fastcjllada_generation(
             idx_repeat=idx_repeat,
             module=self.module,
             attention_mask_repeat=attention_mask_repeat,
