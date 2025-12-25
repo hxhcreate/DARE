@@ -17,27 +17,26 @@
 
 ## 🎯 Overview
 
-We introduce **DARE** (**d**LLM **A**lignment and **R**einforcement **E**xecutor), a flexible and efficient supervised-finetuning (SFT) and reinforcement learning (RL) training framework designed specifically for diffusion large language models (dLLMs). DARE also integrates dLLMs into a comprehensive evaluation platform.
-
-DARE aims to be both flexible and user-friendly to use with:
+We introduce **DARE** (**d**LLM **A**lignment and **R**einforcement **E**xecutor), a flexible and efficient supervised-finetuning (SFT) and reinforcement learning (RL) training framework designed specifically for diffusion large language models (dLLMs). DARE also integrates dLLMs into a comprehensive evaluation platform. It aims to be both flexible and user-friendly to use with:
 - Easy extension of diverse RL algorithms for dLLMs
 - Easy extension of extra benchmark evaluations for dLLMs
-- Easy integration of existing and upcoming dLLM infras, ensuring compatibility and ease of use
-- Ready integration with popular and upcoming HuggingFace dLLMs
+- Easy integration of popular and upcoming dLLM infras and HuggingFace weights
 
-DARE still work in progress, we plan to support more models and algorithm for training and evaluation. **We warmly welcome the research community to collaborations, give feedback and share suggestions.** Let's advance the development of diffusion large language models together !!!👊
+DARE is a work in progress, we plan to support more models and algorithm for training and evaluation. **We warmly welcome the research community to collaborations, give feedback and share suggestions.** Let's advance the diffusion large language models together !!!👊
 
 **Optimization Plan in RL Pipeline**
-- For MDLMs like LLaDA/Dream: We decouple the attention backend used during training from that used during rollout for acceleration. During rollout we require batching and KV-cache acceleration, so we choose `flash_attn_func` or `flash_attn_with_kvcache`, whereas during training we adopt `flash_attn_varlen_func` to reduce meaningless computation on padding tokens. The entire pipeline will be accelerated by approximately **4×**.
+> [!TIP]
+> For MDLMs (LLaDA or Dream), we decouple the attention backend used during training from that used during rollout. Rollout uses `flash_attn_func` or `flash_attn_with_kvcache` for KV-cache, training adopts `flash_attn_varlen_func` to skip meaningless computation on padding tokens. The entire pipeline speed-up approximately ⚡️ **4×**.
 
 <p align="center">
-  <img src="assets/optimization_plan_mdlm.png" style="width:65%; height:auto;">
+  <img src="assets/optimization_plan_mdlm.png" style="width:75%; height:auto;">
 </p>
 
-- For BDLMs like SDAR: We leverage the compatible lmdeploy inference engine to accelerate rollout and adopt `fused_linear_cross_entropy` (logits-free) provided by SDAR to reduce GPU memory usage; the rollout (behavior) policy also supports live update of weights. The entire pipeline will be accelerated more than **14×**.
+> [!TIP]
+> For BDLMs like SDAR: We rollout with compatible lmdeploy inference and adopt SDAR's logits-free `fused_linear_cross_entropy` to cut memory usage, enable online weights update for rollout policy. The entire pipeline will be accelerated more than ⚡️ **14×**.
 
 <p align="center">
-  <img src="assets/optimization_plan_bdlm.png" style="width:65%; height:auto;">
+  <img src="assets/optimization_plan_bdlm.png" style="width:75%; height:auto;">
 </p>
 
 ## 📢 News
@@ -47,7 +46,7 @@ DARE still work in progress, we plan to support more models and algorithm for tr
 - [2025-12-12]: Support sft/peft of SDAR.
 - [2025-12-11]: Support evaluation of LLaDAMoE and LLaDA2.0-mini.
 - [2025-12-08]: Support coupled-grpo, cj-grpo and spg algorithm.
-- [2025-12-03]: Support sequence parallel for several dLLMs (LLaDA/Dream).
+- [2025-12-03]: Support sequence parallel to enable longer generation ability for dLLMs.
 - [2025-12-01]: We initialize the codebase of DARE (dLLM Alignment and Reinforcement Executor), including faster sft/peft/rl (d1, bgpo) training (LLaDA/Dream) and evaluation (LLaDA/Dream/SDAR).
 
 
@@ -74,9 +73,9 @@ DARE still work in progress, we plan to support more models and algorithm for tr
 - **Parallelism for dLLMs**
   - Support sequence parallel
 - **Attention Backend**
-  - Support flash_attn
-  - Support flash_attn_varlen
-  - Support flash_attn_with_kvcache
+  - Support flash_attn backend
+  - Support flash_attn_varlen backend
+  - Support flash_attn_with_kvcache backend
 - **Model Diversity**
   - dLLM that trained from scratch (e.g., LLaDA)
   - dLLM that continuous trained from AR, i.e., AR-to-Diffusion (e.g., Dream, SDAR)
@@ -91,7 +90,9 @@ DARE still work in progress, we plan to support more models and algorithm for tr
 
 Our training framework is built on top of [verl](https://github.com/volcengine/verl), providing a robust foundation for supervised finetuning and reinforcement learning experiments, and our evaluation framework is built on the top of [opencompass](https://github.com/open-compass/opencompass), providing a comprehensive and fast evaluations.
 
-⚠️ *Note*: Due to some **irreconcilable dependency conflicts** between packages, we **strongly recommend using two separate virtual environments**, for training and evaluation, respectively.
+> [!NOTE]
+> Due to some **irreconcilable dependency conflicts** between packages, we **strongly recommend using two separate virtual environments**, for training and evaluation, respectively.
+
 
 ### 🚀 Quick Installation
 
@@ -162,6 +163,10 @@ cp <path_to_llada_model>/*.safetensors models/xxx/
 ```
 
 Also for Dream, SDAR, etc.
+
+> [!NOTE]
+> Since optimization plan in RL pipeline (various attention-computation backend), this step is indispensable.
+
 
 ### 🗄️ Dataset Setup
 
