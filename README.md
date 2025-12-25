@@ -36,7 +36,7 @@ DARE is a work in progress, we plan to support more models and algorithm for tra
 > For BDLMs like SDAR: We rollout with compatible lmdeploy inference and adopt SDAR's logits-free `fused_linear_cross_entropy` to cut memory usage, enable online weights update for rollout policy. The entire pipeline will be accelerated more than ⚡️ **14×**.
 
 <p align="center"
-  <img src="assets/optimization_plan_bdlm.png" style="width:85%; height:auto;">
+  <img src="assets/optimization_plan_bdlm.png" style="width:75%; height:auto;">
 </p>
 
 ## 📢 News
