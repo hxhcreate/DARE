@@ -210,6 +210,8 @@ bash recipe/run_bgpo_sdar_8b_chat.sh --task math # use lmdeploy engine for rollo
 
 ### 🚀 DPO/VRPO Quick Start
 
+Run an example for preference optimization. First download `argilla/ultrafeedback-binarized-preferences-cleaned`, then run `scripts/preprocess_dpo_dataset.sh` to save `ultrafeedback.parquet` under `data/preprocessed/dpo/train` and `data/preprocessed/dpo/test`
+
 ```bash
 # preference optimization for llada_8b_instruct
 bash recipe/run_vrpo_llada_8b_instruct.sh --task ultrafeedback
