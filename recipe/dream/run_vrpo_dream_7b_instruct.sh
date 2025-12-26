@@ -27,12 +27,12 @@ while [[ $# -gt 0 ]]; do
       model_path="$2"
       shift; shift
       ;;
-    --algorithm)
-      algorithm="$2"
+    --task)
+      task="$2"
       shift; shift
       ;;
-    --engine)
-      engine="$2"
+    --algorithm)
+      algorithm="$2"
       shift; shift
       ;;
     *)
@@ -44,8 +44,6 @@ done
 algorithm=${algorithm:-vrpo}
 model=${model:-dream}
 model_path=${model_path:-models/Dream-v0-Instruct-7B}
-engine=${engine:-hf}
-
 
 
 # validate model
@@ -64,12 +62,14 @@ if [[ ! " ${valid_algorithms[@]} " =~ " ${algorithm} " ]]; then
     exit 1
 fi
 
-# validate engine
-valid_engines=("hf" "lmdeploy")
-if [[ ! " ${valid_engines[@]} " =~ " ${engine} " ]]; then
-    echo "Error: Invalid engine '$engine'"
-    echo "Supported engines: ${valid_engines[*]}"
-    exit 1
+# validate task
+if [ $task == "ultrafeedback" ]; then
+    train_files="['data/preprocessed/dpo/train/ultrafeedback.parquet']"
+    val_files="['data/preprocessed/dpo/test/ultrafeedback.parquet']"
+    max_prompt_length=512
+    max_response_length=512
+    num_diffusion_steps=$((max_response_length / 2))
+    total_epoch=10
 fi
 
 train_files="data/preprocessed/dpo/train/example.parquet"

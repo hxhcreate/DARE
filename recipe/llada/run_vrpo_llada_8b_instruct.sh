@@ -27,12 +27,12 @@ while [[ $# -gt 0 ]]; do
       model_path="$2"
       shift; shift
       ;;
-    --algorithm)
-      algorithm="$2"
+    --task)
+      task="$2"
       shift; shift
       ;;
-    --engine)
-      engine="$2"
+    --algorithm)
+      algorithm="$2"
       shift; shift
       ;;
     *)
@@ -44,9 +44,14 @@ done
 algorithm=${algorithm:-vrpo}
 model=${model:-llada}
 model_path=${model_path:-models/LLaDA-8B-Instruct}
-engine=${engine:-hf}
 
-
+# validate task
+valid_tasks=("ultrafeedback")
+if [[ ! " ${valid_tasks[@]} " =~ " ${task} " ]]; then
+    echo "Error: Invalid task '$task'"
+    echo "Supported tasks: ${valid_tasks[*]}"
+    exit 1
+fi
 
 # validate model
 valid_models=("llada" "dream" "sdar")
@@ -64,16 +69,15 @@ if [[ ! " ${valid_algorithms[@]} " =~ " ${algorithm} " ]]; then
     exit 1
 fi
 
-# validate engine
-valid_engines=("hf" "lmdeploy")
-if [[ ! " ${valid_engines[@]} " =~ " ${engine} " ]]; then
-    echo "Error: Invalid engine '$engine'"
-    echo "Supported engines: ${valid_engines[*]}"
-    exit 1
+# validate task
+if [ $task == "ultrafeedback" ]; then
+    train_files="['data/preprocessed/dpo/train/ultrafeedback.parquet']"
+    val_files="['data/preprocessed/dpo/test/ultrafeedback.parquet']"
+    max_prompt_length=512
+    max_response_length=512
+    num_diffusion_steps=$((max_response_length / 2))
+    total_epoch=10
 fi
-
-train_files="data/preprocessed/dpo/train/example.parquet"
-val_files="data/preprocessed/dpo/test/example.parquet"
 
 # Set token IDs based on model
 case $model in
@@ -101,9 +105,6 @@ batch_size=64  # batch_size must be greater than the number of GPUs used
 lr=5e-7
 ppo_micro_batch_size_per_gpu=8  # must be even number to contain chosen and rejected samples
 algorithm="vrpo"
-max_prompt_length=512
-max_response_length=512
-total_epoch=1
 
 ppo_mini_batch_size=$((n_gpus_per_node*ppo_micro_batch_size_per_gpu*2))
 
@@ -116,7 +117,7 @@ beta=0.2
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
-baseline="${model}-${algorithm}-${engine}"
+baseline="${model}-${algorithm}"
 exp_name="${baseline}-bsz${batch_size}-prompt${max_prompt_length}-response${max_response_length}-lr${lr}-n_l${n_l}-mc_num${mc_num}-gpu${n_gpus_per_node}-${timestamp}"
 ckpt_dir=./ckpts/${project_name}/${exp_name}
 log_dir=./logs/${project_name}/${exp_name}
