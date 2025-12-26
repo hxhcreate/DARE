@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/DARE_logo.png" style="width:55%; height:auto;">
+  <img src="assets/DARE_logo.png" style="width:60%; height:auto;">
 </p>
 
 <div align="center">
@@ -212,10 +212,10 @@ bash recipe/run_bgpo_sdar_8b_chat.sh --task math # use lmdeploy engine for rollo
 
 ```bash
 # preference optimization for llada_8b_instruct
-bash recipe/run_vrpo_llada_8b_instruct.sh
+bash recipe/run_vrpo_llada_8b_instruct.sh --task ultrafeedback
 
 # preference optimization for dream_7b_instruct
-bash recipe/run_vrpo_dream_7b_instruct.sh
+bash recipe/run_vrpo_dream_7b_instruct.sh --task ultrafeedback
 ```
 
 
