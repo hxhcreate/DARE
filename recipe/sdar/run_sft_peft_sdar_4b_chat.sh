@@ -3,23 +3,23 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
+export WANDB_API_KEY=
 export WANDB_RESUME="allow"
 export WANDB_MODE="offline"
-export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
+export HF_HOME=
 export HF_HUB_OFFLINE=1
 export OMP_NUM_THREADS=1
 
 echo "Usage: run_sft_peft.sh <nproc_per_node> <model_path> [other_configs...]"
 
 nproc_per_node=${1:-8}
-model_path=${2:-/mnt/shared-storage-user/yangjingyi/BGPO/models/SDAR-4B-Chat}
+model_path=${2:-models/SDAR-4B-Chat}
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
 exp_name="gsm8k-sft-sdar-4b-chat"
-ckpt_dir=/mnt/shared-storage-user/ai4good1-share/yangjingyi/models/${project_name}/${exp_name}
-log_dir=/mnt/shared-storage-user/yangjingyi/BGPO/logs/${project_name}/${exp_name}
+ckpt_dir=./ckpts/${project_name}/${exp_name}
+log_dir=./logs/${project_name}/${exp_name}
 mkdir -p ${ckpt_dir}
 mkdir -p ${log_dir}
 

@@ -4,10 +4,10 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
+export WANDB_API_KEY=
 export WANDB_RESUME="allow"
 export WANDB_MODE="offline"
-export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
+export HF_HOME=
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
@@ -47,7 +47,7 @@ done
 
 algorithm=${algorithm:-cj-grpo}
 model=${model:-llada}
-model_path=${model_path:-/mnt/shared-storage-user/yangjingyi/BGPO/models/LLaDA-8B-Instruct}
+model_path=${model_path:-models/LLaDA-8B-Instruct}
 engine=${engine:-hf}
 
 # validate task
@@ -151,8 +151,8 @@ n_l=1
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
 exp_name="${baseline}-bsz${batch_size}-n${n_rollout}-prompt${max_prompt_length}-response${max_response_length}-step${num_diffusion_steps}-lr${lr}-temp${train_temperature}-n_l${n_l}-mc_num${mc_num}-gpu${n_gpus_per_node}-${timestamp}"
-ckpt_dir=/mnt/shared-storage-user/ai4good1-share/yangjingyi/models/${project_name}/${exp_name}
-log_dir=/mnt/shared-storage-user/yangjingyi/BGPO/logs/${project_name}/${exp_name}
+ckpt_dir=./ckpts/${project_name}/${exp_name}
+log_dir=./logs/${project_name}/${exp_name}
 mkdir -p ${ckpt_dir}
 mkdir -p ${log_dir}
 
