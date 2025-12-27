@@ -89,12 +89,9 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         
         # Calculate log_probs
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            # perturbed_seq = micro_batch["perturbed_seq"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
-            # mask_indices = micro_batch["mask_indices"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
-            # p_mask = micro_batch["p_mask"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)  # (bs*num_iterations, mc_num, seq_len)
-            perturbed_seq = micro_batch["perturbed_seq"]    # (bs*num_iterations, mc_num, seq_len)
-            mask_indices = micro_batch["mask_indices"]    # (bs*num_iterations, mc_num, seq_len)
-            p_mask = micro_batch["p_mask"]  # (bs*num_iterations, mc_num, seq_len)
+            perturbed_seq = micro_batch["perturbed_seq"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
+            mask_indices = micro_batch["mask_indices"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)    # (bs*num_iterations, mc_num, seq_len)
+            p_mask = micro_batch["p_mask"][:, iter_idx, :, :].view(batch_size * num_iterations, mc_num, seq_length)  # (bs*num_iterations, mc_num, seq_len)
             seq = micro_batch["input_ids"]  # (bs, seq_len)
             attention_mask = micro_batch["attention_mask"]  # (bs, mc_num, seq_len)
             
