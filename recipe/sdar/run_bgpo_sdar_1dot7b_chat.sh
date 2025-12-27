@@ -108,13 +108,12 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
 export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
 export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=
+export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
 export WANDB_RESUME="allow"
 export WANDB_MODE="offline"
-export HF_HOME=
+export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
-
 
 algorithm=${algorithm:-bgpo}
 model=${model:-sdar}
@@ -220,8 +219,8 @@ n_l=16
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
 exp_name="${baseline}-bsz${batch_size}-n${n_rollout}-prompt${max_prompt_length}-response${max_response_length}-step${num_diffusion_steps}-lr${lr}-temp${train_temperature}-n_l${n_l}-mc_num${mc_num}-gpu${n_gpus_per_node}-${timestamp}"
-ckpt_dir=./ckpts/${project_name}/${exp_name}
-log_dir=./logs/${project_name}/${exp_name}
+ckpt_dir=/mnt/shared-storage-user/ai4good1-share/yangjingyi/models/${project_name}/${exp_name}
+log_dir=/mnt/shared-storage-user/yangjingyi/BGPO/logs/${project_name}/${exp_name}
 mkdir -p ${ckpt_dir}
 mkdir -p ${log_dir}
 
@@ -304,7 +303,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.nnodes=1 \
     trainer.default_local_dir=$ckpt_dir \
-    trainer.save_freq=20 \
+    trainer.save_freq=1 \
     trainer.test_freq=20 \
     trainer.total_epochs=$total_epoch \
     custom_reward_function.path="verl/utils/reward_score/__init__.py" \

@@ -58,6 +58,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# clean up old ray
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # start up ray head
 echo "[INFO] Starting Ray head..."
 ray start --head \
@@ -209,8 +214,8 @@ algorithm="bgpo"
 val_num_diffusion_steps=4
 num_diffusion_steps=4
 block_length=4
-mc_num=16
-n_l=16
+mc_num=8
+n_l=8
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT

@@ -4,10 +4,10 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=
+export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
 export WANDB_RESUME="allow"
 export WANDB_MODE="offline"
-export HF_HOME=
+export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
@@ -47,7 +47,7 @@ done
 
 algorithm=${algorithm:-coupled-grpo}
 model=${model:-llada}
-model_path=${model_path:-models/LLaDA-8B-Instruct}
+model_path=${model_path:-/mnt/shared-storage-user/yangjingyi/BGPO/models/LLaDA-8B-Instruct}
 engine=${engine:-hf}
 
 # validate task
@@ -81,6 +81,8 @@ if [[ ! " ${valid_engines[@]} " =~ " ${engine} " ]]; then
     echo "Supported engines: ${valid_engines[*]}"
     exit 1
 fi
+
+baseline="${model}-${task}-${algorithm}-${engine}"
 
 if [ $task == "math" ]; then
     train_files="['data/preprocessed/rl/train/math_1.parquet','data/preprocessed/rl/train/gsm8k_1.parquet']"
@@ -149,14 +151,13 @@ n_l=1
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT
-baseline="${model}-${task}-${algorithm}-${engine}"
 exp_name="${baseline}-bsz${batch_size}-n${n_rollout}-prompt${max_prompt_length}-response${max_response_length}-step${num_diffusion_steps}-lr${lr}-temp${train_temperature}-n_l${n_l}-mc_num${mc_num}-gpu${n_gpus_per_node}-${timestamp}"
-ckpt_dir=./ckpts/${project_name}/${exp_name}
-log_dir=./logs/${project_name}/${exp_name}
+ckpt_dir=/mnt/shared-storage-user/ai4good1-share/yangjingyi/models/${project_name}/${exp_name}
+log_dir=/mnt/shared-storage-user/yangjingyi/BGPO/logs/${project_name}/${exp_name}
 mkdir -p ${ckpt_dir}
 mkdir -p ${log_dir}
 
-python3 -m verl.trainer.main_dllm_ppo \
+python3 -m verl.trainer.dllm_main_ppo \
     algorithm.adv_estimator=grpo \
     +algorithm.name=${algorithm} \
     reward_model.reward_manager=dllm \
@@ -171,7 +172,7 @@ python3 -m verl.trainer.main_dllm_ppo \
     data.filter_overlong_prompts=True \
     data.truncation="error" \
     +actor_rollout_ref.algorithm.name=${algorithm} \
-    +actor_rollout_ref.model.name=$model \
+    +actor_rollout_ref.model.name=${model} \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \
@@ -224,7 +225,7 @@ python3 -m verl.trainer.main_dllm_ppo \
     trainer.logger=["console","wandb"] \
     trainer.project_name=$project_name \
     trainer.experiment_name=$exp_name \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.nnodes=1 \
     trainer.default_local_dir=$ckpt_dir \

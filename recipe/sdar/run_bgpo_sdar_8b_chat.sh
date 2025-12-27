@@ -58,6 +58,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# clean up old ray
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # start up ray head
 echo "[INFO] Starting Ray head..."
 ray start --head \
@@ -73,7 +78,7 @@ MODEL_PATH=${model_path:-models/SDAR-8B-Chat}
 SERVER_PORT=23333
 LMDEPLOY_EXECUTOR_BACKEND="ray"
 LMDEPLOY_ENGINE_BACKEND="pytorch"
-CACHE_MAX_ENTRY_COUNT=0.5
+CACHE_MAX_ENTRY_COUNT=0.4
 SESSION_LEN=2048
 BLOCK_LENGTH=4
 UNMASKING_STRATEGY="low_confidence_dynamic"
@@ -212,8 +217,8 @@ rollout_tensor_parallel_size=1
 val_num_diffusion_steps=4
 num_diffusion_steps=4
 block_length=4
-mc_num=8
-n_l=8
+mc_num=2
+n_l=2
 
 timestamp=$(date +"%Y%m%d_%H%M%S")
 project_name=$WANDB_PROJECT

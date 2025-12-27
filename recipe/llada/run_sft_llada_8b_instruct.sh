@@ -3,22 +3,22 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=
+export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
 export WANDB_RESUME="allow"
 export WANDB_MODE="offline"
-export HF_HOME=
+export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
 export HF_HUB_OFFLINE=1
 export OMP_NUM_THREADS=1
 
 echo "Usage: run_sft.sh <nproc_per_node> <model_path> [other_configs...]"
 
 nproc_per_node=${1:-8}
-MODEL_PATH=${2:-models/LLaDA-8B-Instruct}
+MODEL_PATH=${2:-/mnt/shared-storage-user/yangjingyi/BGPO/models/LLaDA-8B-Instruct}
 
 PROJECT_NAME=$WANDB_PROJECT
 EXP_NAME="gsm8k-sft-llada-8b-instruct"
-CKPT_DIR=./ckpts/${PROJECT_NAME}/${EXP_NAME}
-LOG_DIR=./logs/${PROJECT_NAME}/${EXP_NAME}
+CKPT_DIR=/mnt/shared-storage-user/ai4good1-share/yangjingyi/models/${PROJECT_NAME}/${EXP_NAME}
+LOG_DIR=/mnt/shared-storage-user/yangjingyi/BGPO/logs/${PROJECT_NAME}/${EXP_NAME}
 mkdir -p ${CKPT_DIR}
 mkdir -p ${LOG_DIR}
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -34,7 +34,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     optim.lr=1e-4 \
     data.prompt_dict_keys=['question'] \
     +data.response_dict_keys=['answer'] \
-    data.micro_batch_size_per_gpu=1 \
+    data.micro_batch_size_per_gpu=2 \
     model.partial_pretrain=${MODEL_PATH} \
     model.trust_remote_code=True \
     +model.attn_implementation="flash_attention_2" \

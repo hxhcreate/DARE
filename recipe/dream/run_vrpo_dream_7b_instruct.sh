@@ -4,10 +4,10 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # Add memory fragmentation optimization
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export WANDB_PROJECT="DARE"
-export WANDB_API_KEY=
+export WANDB_API_KEY=42598cc56636f040038970a197ecd2c231a697cc
 export WANDB_RESUME="allow"
 export WANDB_MODE="offline"
-export HF_HOME=
+export HF_HOME=/mnt/shared-storage-user/yangjingyi/huggingface
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
