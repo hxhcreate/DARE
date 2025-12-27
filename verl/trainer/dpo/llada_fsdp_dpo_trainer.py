@@ -157,8 +157,8 @@ class DLLMRayDPOTrainer(RayPPOTrainer):
             forward_batch_output = self.actor_rollout_wg.forward_process(test_batch)
             test_batch = test_batch.union(forward_batch_output)    
                     
-            ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(test_batch)
-            test_batch = test_batch.union(ref_log_prob)                
+            ref_log_probs = self.ref_policy_wg.compute_ref_log_prob(test_batch)
+            test_batch = test_batch.union(ref_log_probs)                
             
             test_batch.meta_info["multi_turn"] = self.config.data.multiturn.enable
             val_output = self.actor_rollout_wg.compute_policy_loss_for_validation(test_batch)
@@ -302,8 +302,8 @@ class DLLMRayDPOTrainer(RayPPOTrainer):
                     batch = batch.union(forward_batch_output)    
                     
                     with _timer("ref", timing_raw):
-                        ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                        batch = batch.union(ref_log_prob)                
+                        ref_log_probs = self.ref_policy_wg.compute_ref_log_prob(batch)
+                        batch = batch.union(ref_log_probs)                
                     
                     # update actor
                     with _timer("update_actor", timing_raw):
