@@ -612,9 +612,9 @@ def fast_reversed_process(
     if not step_merge:
         reversed_traj = [x.clone()] # with initial x, one more than steps
         reversed_traj_unmask_positions = []
-    if step_merge:
-        mereged_reversed_traj = [x.clone()]
-        mereged_reversed_traj_unmask_positions = []
+    else:
+        merged_reversed_traj = [x.clone()]
+        merged_reversed_traj_unmask_positions = []
     for num_block in range(num_blocks):
         current_block_start = prompt.shape[1] + num_block * block_length
         current_block_end = current_block_start + block_length
@@ -632,6 +632,11 @@ def fast_reversed_process(
         else:
             x0, transfer_index = get_transfer_index_dynamic(output.logits, temperature, remasking, mask_index, x, None, factor)
         x[transfer_index] = x0[transfer_index]
+
+        if not step_merge:
+            unmask_positions = (mask_index & (x != mask_id))[:, -gen_length:]
+            reversed_traj.append(x.clone())
+            reversed_traj_unmask_positions.append(unmask_positions)
 
         new_past_key_values = []
         for i in range(len(past_key_values)):
@@ -663,15 +668,15 @@ def fast_reversed_process(
                 unmask_positions = (full_mask_index & (x != mask_id))[:, -gen_length:]
                 reversed_traj.append(x.clone())
                 reversed_traj_unmask_positions.append(unmask_positions)
-            if step_merge and i == (steps_per_block - 1):
-                unmask_positions = (mask_index_per_block & (x != mask_id))[:, -gen_length:]
-                mereged_reversed_traj.append(x.clone())
-                mereged_reversed_traj_unmask_positions.append(unmask_positions)
+            elif step_merge and i == (steps_per_block - 1):
+                merged_unmask_positions = (mask_index_per_block & (x != mask_id))[:, -gen_length:]
+                merged_reversed_traj.append(x.clone())
+                merged_reversed_traj_unmask_positions.append(merged_unmask_positions)
 
             i += 1
         
     if step_merge:
-        return x, torch.stack(mereged_reversed_traj, dim=1), torch.stack(mereged_reversed_traj_unmask_positions, dim=1)
+        return x, torch.stack(merged_reversed_traj, dim=1), torch.stack(merged_reversed_traj_unmask_positions, dim=1)
     else:
         return x, torch.stack(reversed_traj, dim=1), torch.stack(reversed_traj_unmask_positions, dim=1)
 
