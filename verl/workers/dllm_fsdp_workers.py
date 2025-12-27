@@ -611,8 +611,6 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 trust_remote_code=self.config.model.get("trust_remote_code", False),
                 use_liger=self.config.model.get("use_liger", False),
                 role="ref",
-                attn_implementation=self.config.model.get("attn_implementation", "eager"),  # LNY: Force using the most basic PyTorch Attention implementation
-                
             )[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
@@ -796,7 +794,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             batch_size, seq_len = input_ids.shape
             prompt_len = seq_len - response_length  # int
             device = input_ids.device
-            n_y_l = mc_num // n_l  # mc_num: Monte Carlo sampling times
+            num_iterations = self.config.actor.get("num_iterations", 1)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):            
                 # Generate perturbed_seq, mask_indices, p_mask for each sample in the batch
@@ -811,21 +809,23 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     mc_mask_indices_list = []
                     mc_p_mask_list = []
 
-                    for j in range(n_y_l):
-                        perturbed_seq, mask_indices, p_mask = _forward_process(batch=single_input_id, attention_mask=attention_mask[i],  prompt_len=prompt_len, block_length=block_length, num_t=n_l, MASK_TOKEN_ID=MASK_TOKEN_ID)  # (n_l, seq_len)
+                    for j in range(num_iterations):
+                        perturbed_seq, mask_indices, p_mask = _forward_process(batch=single_input_id, attention_mask=attention_mask[i],  prompt_len=prompt_len, block_length=block_length, num_t=mc_num, MASK_TOKEN_ID=MASK_TOKEN_ID)  # (mc_num, seq_len)
                         assert (mask_indices == (perturbed_seq == MASK_TOKEN_ID)).all()
 
                         mc_perturbed_seq_list.append(perturbed_seq)
                         mc_mask_indices_list.append(mask_indices)
                         mc_p_mask_list.append(p_mask)
+                        
 
-                    all_perturbed_seqs.append(torch.cat(mc_perturbed_seq_list, dim=0))  # (mc_num, seq_len)
-                    all_mask_indices.append(torch.cat(mc_mask_indices_list, dim=0))  # (mc_num, seq_len)
-                    all_p_mask.append(torch.cat(mc_p_mask_list, dim=0))  # (mc_num, seq_len)
+                    all_perturbed_seqs.append(torch.stack(mc_perturbed_seq_list, dim=0))  # (num_iterations, mc_num, seq_len)
+                    all_mask_indices.append(torch.stack(mc_mask_indices_list, dim=0))  # (num_iterations, mc_num, seq_len)
+                    all_p_mask.append(torch.stack(mc_p_mask_list, dim=0))  # (num_iterations, mc_num, seq_len)
 
-                perturbed_seq = torch.stack(all_perturbed_seqs, dim=0)  # (batch_size, mc_num, seq_len)
-                mask_indices = torch.stack(all_mask_indices, dim=0)  # (batch_size, mc_num, seq_len)
-                p_mask = torch.stack(all_p_mask, dim=0)  # (batch_size, mc_num, seq_len)
+                # [num_iterations * batch_size, num_t, seq_len]
+                perturbed_seq = torch.stack(all_perturbed_seqs, dim=0)  # (batch_size, num_iterations, mc_num, seq_len)
+                mask_indices = torch.stack(all_mask_indices, dim=0)  # (batch_size, num_iterations,  mc_num, seq_len)
+                p_mask = torch.stack(all_p_mask, dim=0)  # (batch_size, num_iterations, mc_num, seq_len)
         
         else:
             NotImplementedError(f"Unsupported algorithm: {self.config.algorithm.name} for forward process in DLLMActorRolloutRefWorker")
@@ -867,9 +867,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
-                entropys, log_probs, loss_per_samples = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
+                entropys, log_probs, loss_per_sample = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
             output = DataProto.from_dict(
-                tensors={"old_log_probs": log_probs, "old_loss_per_samples": loss_per_samples, "old_entropys": entropys},
+                tensors={"old_log_probs": log_probs, "old_loss_per_sample": loss_per_sample, "old_entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
             output = self.ulysses_sharding_manager.postprocess_data(output)
@@ -894,7 +894,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             data.meta_info['is_lora'] = True
             data = self.compute_log_prob(data)
             # this old_log_probs is in fact ref_log_prob
-            data = DataProto.from_dict(tensors={'ref_log_prob': data.batch['old_log_probs']})
+            data = DataProto.from_dict(tensors={'ref_log_probs': data.batch['old_log_probs']})
             return data
         assert self._is_ref
         # else:
@@ -909,8 +909,8 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
-            entropys, log_probs, loss_per_sample = self.ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-            output = DataProto.from_dict(tensors={"ref_log_prob": log_probs})
+            entropys, log_probs, loss_per_sample = self.ref_policy.compute_log_prob(data=data, calculate_entropy=True)
+            output = DataProto.from_dict(tensors={"ref_log_probs": log_probs, "ref_loss_per_sample": loss_per_sample, "ref_entropys": entropys})
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
         output = output.to("cpu")
@@ -956,7 +956,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
 
         if self.config.model.name == 'dream':
             if not self.generation_config.do_sample:
-                self.generation_config.temperature = None
+                self.generation_config.do_sample = True
 
         self.checkpoint_manager.save_checkpoint(local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep)
         dist.barrier()
