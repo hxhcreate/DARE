@@ -41,6 +41,7 @@ DARE is a work in progress, we plan to support more models and algorithm for tra
 
 
 ## 📢 News
+- [2025-12-28]: **Important**❗️ Several errors/bugs/updates in dp_actor_algorithm have been fixed/adapted. If you encounter issues before updating, pull repo after the timestamp 12-28 first.
 - [2025-12-24]: Support online rl (online weight update of rollout) for SDAR.
 - [2025-12-23]: Support vrpo (preference optimization) for Dream.
 - [2025-12-16]: Support vrpo (preference optimization) for LLaDA.
