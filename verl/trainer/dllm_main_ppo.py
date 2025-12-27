@@ -35,11 +35,15 @@ def run_ppo(config) -> None:
             ray.init(
                 address="127.0.0.1:6379",
                 runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN",
+                "WANDB_PROJECT": os.environ["WANDB_PROJECT"], "WANDB_API_KEY": os.environ["WANDB_API_KEY"], 
+                "WANDB_RESUME": os.environ.get("WANDB_RESUME", "allow"), "WANDB_MODE": os.environ.get("WANDB_MODE", "offline"),
                 "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
             )
         else:
             ray.init(
                 runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN",
+                "WANDB_PROJECT": os.environ["WANDB_PROJECT"], "WANDB_API_KEY": os.environ["WANDB_API_KEY"], 
+                "WANDB_RESUME": os.environ.get("WANDB_RESUME", "allow"), "WANDB_MODE": os.environ.get("WANDB_MODE", "offline"),
                 "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true"}},
                 num_cpus=config.ray_init.num_cpus,
             )
