@@ -51,7 +51,7 @@ class RMDataset(Dataset):
         add_eos=True,
         cache_dir="~/.cache/verl/rm",
     ):
-        if not isinstance(parquet_files, List):
+        if not isinstance(parquet_files, (List, ListConfig)):
             parquet_files = [parquet_files]
 
         self.parquet_files = parquet_files
