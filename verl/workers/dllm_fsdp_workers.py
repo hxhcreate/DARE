@@ -611,6 +611,8 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 trust_remote_code=self.config.model.get("trust_remote_code", False),
                 use_liger=self.config.model.get("use_liger", False),
                 role="ref",
+                attn_implementation=self.config.model.get("attn_implementation", "eager"),  # LNY: Force using the most basic PyTorch Attention implementation
+                
             )[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
@@ -865,9 +867,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
-                entropys, log_probs, elbo = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
+                entropys, log_probs, loss_per_samples = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
             output = DataProto.from_dict(
-                tensors={"old_log_probs": log_probs, "old_elbo": elbo, "old_entropys": entropys},
+                tensors={"old_log_probs": log_probs, "old_loss_per_samples": loss_per_samples, "old_entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
             output = self.ulysses_sharding_manager.postprocess_data(output)
@@ -908,7 +910,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             entropys, log_probs, loss_per_sample = self.ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-            output = DataProto.from_dict(tensors={"ref_log_prob": loss_per_sample})
+            output = DataProto.from_dict(tensors={"ref_log_prob": log_probs})
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
         output = output.to("cpu")

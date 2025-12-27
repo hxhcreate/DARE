@@ -103,15 +103,15 @@ esac
 n_gpus_per_node=$(echo $CUDA_VISIBLE_DEVICES | tr "," "\n" | wc -l)
 batch_size=64  # batch_size must be greater than the number of GPUs used
 lr=5e-7
-ppo_micro_batch_size_per_gpu=8  # must be even number to contain chosen and rejected samples
+ppo_micro_batch_size_per_gpu=4  # must be even number to contain chosen and rejected samples
 algorithm="vrpo"
 
 ppo_mini_batch_size=$((n_gpus_per_node*ppo_micro_batch_size_per_gpu*2))
 
 # diffusion related parameters
 block_length=32
-mc_num=16
-n_l=16
+mc_num=4
+n_l=4
 
 beta=0.2
 
@@ -144,7 +144,7 @@ python3 -m verl.trainer.dllm_main_dpo \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     actor_rollout_ref.actor.ppo_mini_batch_size=$ppo_mini_batch_size \
-    actor_rollout_ref.actor.use_dynamic_bsz=True \
+    actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=5120 \
     actor_rollout_ref.actor.beta=$beta \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
@@ -152,8 +152,8 @@ python3 -m verl.trainer.dllm_main_dpo \
     actor_rollout_ref.model.trust_remote_code=True \
     +actor_rollout_ref.model.attn_implementation="flash_attention_2" \
     +actor_rollout_ref.model.baseline=$baseline \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     +actor_rollout_ref.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=[LLaDALlamaBlock] \
     +actor_rollout_ref.actor.mc_num=$mc_num \
     +actor_rollout_ref.actor.n_l=$n_l \
@@ -164,6 +164,7 @@ python3 -m verl.trainer.dllm_main_dpo \
     +actor_rollout_ref.ref.cfg_scale=0.0 \
     +actor_rollout_ref.ref.baseline=$baseline \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     +actor_rollout_ref.ref.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap=[LLaDALlamaBlock] \
     trainer.logger=["console","wandb"] \
     trainer.project_name=$project_name \

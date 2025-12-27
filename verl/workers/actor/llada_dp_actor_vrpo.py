@@ -124,14 +124,14 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
 
             log_likelihood = loss_per_sample.sum(dim=1) / mc_num  # (batch_size,)
             log_probs = (log_likelihood / response_length).view(-1, 1).repeat(1, response_length)  # (batch_size, response_length)
-            loss_per_sample = (loss_per_sample / response_length).unsqueeze(-1).expand(-1, -1, response_length).contiguous()
+            # loss_per_sample = (loss_per_sample / response_length).unsqueeze(-1).expand(-1, -1, response_length).contiguous()
         
         entropy = None
         if calculate_entropy:
             probs = log_probs.exp()
             entropy = -probs * log_probs  # (bs, response_length) entropy of each token
             
-        return entropy, log_probs, loss_per_sample
+        return entropy, log_probs, None
     
     def _get_logits(self, model, packed_input, cu_seqlens, max_seqlen, prompt_len, cfg_scale=0.0, MASK_TOKEN_ID=126336):
         """
@@ -168,8 +168,8 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
 
         # all return: (bsz, response_length)
         calculate_entropy = False
-
-        _, _, log_prob = self._forward_micro_batch(micro_batch=data, 
+        
+        _, log_prob, _  = self._forward_micro_batch(micro_batch=data, 
                                             mc_num=self.mc_num, n_l=self.n_l,
                                             calculate_entropy=calculate_entropy, call_fn_name="update_policy")
 
@@ -234,19 +234,16 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
 
         log_probs_lst = []
         entropy_lst = []
-        loss_per_sample_lst = []
         for micro_batch in micro_batches:
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
             with torch.no_grad():
-                entropy, log_probs, loss_per_sample = self._forward_micro_batch(micro_batch, n_l=self.n_l, mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
+                entropy, log_probs, _ = self._forward_micro_batch(micro_batch, n_l=self.n_l, mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
             log_probs_lst.append(log_probs)
-            loss_per_sample_lst.append(loss_per_sample)
             if calculate_entropy:
                 entropy_lst.append(entropy)
 
         log_probs = torch.concat(log_probs_lst, dim=0)
-        loss_per_sample = torch.concat(loss_per_sample_lst, dim=0)
         entropys = None
         if calculate_entropy:
             entropys = torch.concat(entropy_lst, dim=0)
@@ -255,9 +252,8 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
-            loss_per_sample = loss_per_sample[revert_indices]
-        return entropy, log_probs, loss_per_sample  # loss_per_sample is stored in old_log_probs field
-
+        return entropy, log_probs, None
+    
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):
         # make sure we are in training mode
@@ -313,7 +309,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                 else:
                     loss = dpo_loss / self.gradient_accumulation
                 
-                print(f"\nloss: {loss}\n")
+                print(f"loss: {loss}")
                 loss.backward()  # Gradient is accumulated in model parameters, but will not be updated now
                 
             data = {

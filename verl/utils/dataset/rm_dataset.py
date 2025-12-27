@@ -213,7 +213,7 @@ class dLLMRMDataset(Dataset):
         self.prompts = self.dataframe[self.prompt_key].tolist()
         self.chosen_responses = self.dataframe[self.chosen_key].tolist()
         self.rejected_responses = self.dataframe[self.rejected_key].tolist()
-
+        
     def __len__(self):
         return len(self.prompts)
 
@@ -223,8 +223,8 @@ class dLLMRMDataset(Dataset):
         rejected_response = self.rejected_responses[item]
          
         prompt = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
-        chosen_response = self.tokenizer.apply_chat_template(chosen_response, is_response=True, tokenize=False)
-        rejected_response = self.tokenizer.apply_chat_template(rejected_response, is_response=True, tokenize=False)
+        chosen_response = chosen_response[0]['content'] + self.tokenizer.eos_token
+        rejected_response = rejected_response[0]['content'] + self.tokenizer.eos_token
 
         prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]
         chosen_response_ids = self.tokenizer(chosen_response, return_tensors="pt")["input_ids"][0]
