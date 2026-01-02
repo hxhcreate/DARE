@@ -51,7 +51,7 @@ Some third-party features, like Humaneval and Llama, may require additional step
 For LLaDA2.0 series inference, you need to ensure:
 
 ```bash
-transformers>=4.53.0
+transformers>=4.54.0
 ```
 
 For SGLang inference support of LLaDA2.0, you need to install sglang as follows:
