@@ -11,6 +11,10 @@ export HF_HOME=
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # arguments parsing
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -84,14 +88,14 @@ if [ $task == "math" ]; then
     train_files="['data/preprocessed/rl/train/math_1.parquet','data/preprocessed/rl/train/gsm8k_1.parquet']"
     val_files="['data/preprocessed/rl/test/math500_1.parquet','data/preprocessed/rl/test/gsm8k_1.parquet']"
     max_prompt_length=512
-    max_response_length=512
+    max_response_length=256
     num_diffusion_steps=$((max_response_length / 2))
     total_epoch=1
 elif [ $task == "code" ]; then
     train_files="['data/preprocessed/rl/train/lcbv5-K8_1.parquet','data/preprocessed/rl/train/primeintellect-K8_1.parquet','data/preprocessed/rl/train/taco-K8_1.parquet']"
     val_files="['data/preprocessed/rl/test/mbpp_1.parquet','data/preprocessed/rl/test/humaneval_1.parquet','data/preprocessed/rl/test/humanevalplus_1.parquet']"
-    max_prompt_length=1024
-    max_response_length=512
+    max_prompt_length=512
+    max_response_length=256
     num_diffusion_steps=$max_response_length
     total_epoch=5
 elif [ $task == "countdown" ]; then
@@ -140,7 +144,7 @@ train_temperature=0.6
 
 # diffusion related parameters
 val_num_diffusion_steps=$max_response_length
-block_length=128
+block_length=64
 mc_num=1
 n_l=1
 
@@ -167,7 +171,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation="error" \
     +actor_rollout_ref.algorithm.name=${algorithm} \
-    +actor_rollout_ref.model.name=$model \
+    +actor_rollout_ref.model.name=${model} \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \
@@ -196,7 +200,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     +actor_rollout_ref.actor.baseline=$baseline \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
-    +actor_rollout_ref.rollout.use_cache=False \
+    +actor_rollout_ref.rollout.use_cache=True \
     +actor_rollout_ref.rollout.dual_cache=False \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.rollout.n=$n_rollout \

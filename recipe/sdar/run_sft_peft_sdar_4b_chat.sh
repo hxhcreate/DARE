@@ -27,11 +27,12 @@ mkdir -p ${log_dir}
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
      -m verl.trainer.sdar_fsdp_sft_trainer \
     data.train_files=data/preprocessed/sft/train/gsm8k_train.parquet \
-    data.val_files/data/preprocessed/sft/test/gsm8k_test.parquet \
+    data.val_files=data/preprocessed/sft/test/gsm8k_test.parquet \
     data.prompt_key=extra_info \
     data.response_key=extra_info \
     data.max_length=4096 \
     +data.mask_token_id=151669 \
+    +data.pad_token_id=151643 \
     optim.lr=1e-4 \
     data.prompt_dict_keys=['question'] \
     +data.response_dict_keys=['answer'] \
@@ -44,15 +45,15 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     trainer.project_name=$project_name \
     trainer.experiment_name=$exp_name \
     trainer.logger=["console","wandb"] \
-    trainer.total_epochs=50 \
     trainer.total_training_steps=1000 \
     ulysses_sequence_parallel_size=1 \
     use_remove_padding=false \
-    model.lora_rank=32 \
+    model.lora_rank=32\
     model.lora_alpha=16 \
-    model.target_modules=all-linear \
-    >> ${log_dir}/gsm8k-${timestamp}.out \
-    2>> ${log_dir}/gsm8k-${timestamp}.err &
+    model.target_modules=all-linear 
+#     \
+#     >> ${log_dir}/gsm8k-${timestamp}.out \
+#     2>> ${log_dir}/gsm8k-${timestamp}.err &
 
     # Or you can do this:
     # model.target_modules=[q_proj,v_proj] \

@@ -307,7 +307,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
-            select_keys.append("ref_log_prob")
+            select_keys.append("ref_log_probs")
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
 
@@ -395,9 +395,9 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                             policy_loss = pg_loss
 
                         if self.config.use_kl_loss:  # NOTE: Currently not considering KL
-                            ref_log_prob = data["ref_log_prob"]
+                            ref_log_probs = data["ref_log_probs"]
                             # compute kl loss
-                            kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type)
+                            kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_probs, kl_penalty=self.config.kl_loss_type)
                             kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
                             policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef

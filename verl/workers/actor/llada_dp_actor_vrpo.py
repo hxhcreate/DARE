@@ -163,13 +163,13 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             data = data.to(get_torch_device().current_device())  # actor device is cpu when using offload
 
         response_length = data["responses"].size(1)
-        ref_log_prob = data["ref_log_prob"]  # (bsz, mc_num)
+        ref_log_prob = data["ref_log_probs"]  # (bsz, mc_num)
         beta = self.config.beta
 
         # all return: (bsz, response_length)
         calculate_entropy = False
-
-        _, log_prob, _ = self._forward_micro_batch(micro_batch=data, 
+        
+        _, log_prob, _  = self._forward_micro_batch(micro_batch=data, 
                                             mc_num=self.mc_num, n_l=self.n_l,
                                             calculate_entropy=calculate_entropy, call_fn_name="update_policy")
 
@@ -215,6 +215,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         self.actor_module.eval()
 
         micro_batch_size = data.meta_info["micro_batch_size"]
+        temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         use_dynamic_bsz = data.meta_info["use_dynamic_bsz"]
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "perturbed_seq", "mask_indices", "p_mask"]
@@ -232,20 +233,20 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
         else:
             micro_batches = batch.split(micro_batch_size)
 
-        log_probs_lst = []
+        log_prob_lst = []
         entropy_lst = []
         loss_per_sample_lst = []
         for micro_batch in micro_batches:
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
             with torch.no_grad():
-                entropy, log_probs, loss_per_sample = self._forward_micro_batch(micro_batch, n_l=self.n_l, mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
-            log_probs_lst.append(log_probs)
+                entropy, log_prob, loss_per_sample = self._forward_micro_batch(micro_batch, n_l=self.n_l, mc_num=self.mc_num, calculate_entropy=calculate_entropy, call_fn_name="compute_log_prob")
+            log_prob_lst.append(log_prob)
             loss_per_sample_lst.append(loss_per_sample)
             if calculate_entropy:
                 entropy_lst.append(entropy)
 
-        log_probs = torch.concat(log_probs_lst, dim=0)
+        log_probs = torch.concat(log_prob_lst, dim=0)
         loss_per_sample = torch.concat(loss_per_sample_lst, dim=0)
         entropys = None
         if calculate_entropy:
@@ -256,8 +257,8 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
             loss_per_sample = loss_per_sample[revert_indices]
-        return loss_per_sample, entropys  # loss_per_sample is stored in old_log_probs field
-
+        return entropys, log_probs, loss_per_sample
+    
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):
         # make sure we are in training mode
@@ -265,7 +266,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
     
         multi_turn = data.meta_info.get("multi_turn", False)
         
-        select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "perturbed_seq", "mask_indices", "p_mask", "ref_log_prob"]
+        select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "perturbed_seq", "mask_indices", "p_mask", "ref_log_probs"]
         if multi_turn:
             select_keys.append("loss_mask")
         
@@ -313,7 +314,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
                 else:
                     loss = dpo_loss / self.gradient_accumulation
                 
-                print(f"loss: {loss}\n")
+                print(f"loss: {loss}")
                 loss.backward()  # Gradient is accumulated in model parameters, but will not be updated now
                 
             data = {
@@ -332,7 +333,7 @@ class DLLMDataParallelPPOActor(DataParallelPPOActor):
     
         multi_turn = data.meta_info.get("multi_turn", False)
 
-        select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "perturbed_seq", "mask_indices", "p_mask", "ref_log_prob"]
+        select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "perturbed_seq", "mask_indices", "p_mask", "ref_log_probs"]
         if multi_turn:
             select_keys.append("loss_mask")
         

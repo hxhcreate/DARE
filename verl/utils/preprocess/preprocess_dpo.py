@@ -51,15 +51,17 @@ if __name__ == "__main__":
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
         def process_fn(example, idx):
-            prompt = example.pop('prompt')
-            if not isinstance(prompt, list):
-                prompt = [{
-                    "role": "user",
-                    "content": prompt
-                }]
-                
-            chosen = example.pop('chosen')[:1]
-            rejected = example.pop('rejected')[:1]
+            
+            chosen_lst = example.pop('chosen')
+            prompt = chosen_lst[:1]
+            
+            chosen = chosen_lst[1:]
+            rejected = example.pop('rejected')[1:]
+            
+            assert len(chosen) == len(rejected), f"len chosen {len(chosen)} != len rejected {len(rejected)}"
+            assert len(chosen)  == 1, f"len chosen {len(chosen)} != 1"
+            assert chosen[0]['role'] == 'assistant', f"chosen role is not assistant"
+            assert rejected[0]['role'] == 'assistant', f"rejected role is not assistant"
             
             data_source = example.pop('source', 'unknown')
             data = {

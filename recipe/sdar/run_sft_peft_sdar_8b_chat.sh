@@ -31,27 +31,30 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.response_key=extra_info \
     data.max_length=4096 \
     +data.mask_token_id=151669 \
+    +data.pad_token_id=151643 \
     optim.lr=1e-4 \
     data.prompt_dict_keys=['question'] \
     +data.response_dict_keys=['answer'] \
     data.micro_batch_size_per_gpu=1 \
     model.partial_pretrain=${MODEL_PATH} \
     model.trust_remote_code=True \
+    +model.block_size=4 \
     +model.attn_implementation="flash_attention_2" \
     +model.fsdp_config.model_dtype=float32 \
     trainer.default_local_dir=$CKPT_DIR \
     trainer.project_name=$PROJECT_NAME \
     trainer.experiment_name=$EXP_NAME \
     trainer.logger=["console","wandb"] \
-    trainer.total_epochs=50 \
+    trainer.total_epochs=500 \
     trainer.total_training_steps=1000 \
     ulysses_sequence_parallel_size=1 \
     use_remove_padding=false \
-    model.lora_rank=32 \
+    model.lora_rank=32\
     model.lora_alpha=16 \
-    model.target_modules=all-linear \
-    >> ${LOG_DIR}/gsm8k-${TIMESTAMP}.out \
-    2>> ${LOG_DIR}/gsm8k-${TIMESTAMP}.err &
+    model.target_modules=all-linear 
+#     \
+#     >> ${LOG_DIR}/gsm8k-${TIMESTAMP}.out \
+#     2>> ${LOG_DIR}/gsm8k-${TIMESTAMP}.err &
 
     # Or you can do this:
     # model.target_modules=[q_proj,v_proj] \

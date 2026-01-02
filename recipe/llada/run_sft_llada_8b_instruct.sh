@@ -34,7 +34,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     optim.lr=1e-4 \
     data.prompt_dict_keys=['question'] \
     +data.response_dict_keys=['answer'] \
-    data.micro_batch_size_per_gpu=1 \
+    data.micro_batch_size_per_gpu=2 \
     model.partial_pretrain=${MODEL_PATH} \
     model.trust_remote_code=True \
     +model.attn_implementation="flash_attention_2" \

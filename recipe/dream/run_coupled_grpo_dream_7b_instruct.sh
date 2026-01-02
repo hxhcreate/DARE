@@ -11,6 +11,10 @@ export HF_HOME=
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # arguments parsing
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -136,7 +140,7 @@ batch_size=16  # batch_size must be greater than the number of GPUs used
 n_rollout=8
 lr=5e-7
 ppo_micro_batch_size_per_gpu=1  # gradient accumulation = batch_size / ppo_micro_batch_size_per_gpu
-train_temperature=0.6
+train_temperature=0.2
 algorithm="coupled-grpo"
 
 # diffusion related parameters
@@ -169,7 +173,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     data.truncation="error" \
     data.trust_remote_code=True \
     +actor_rollout_ref.algorithm.name=${algorithm} \
-    +actor_rollout_ref.model.name=$model \
+    +actor_rollout_ref.model.name=${model} \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=$lr \
     actor_rollout_ref.actor.optim.weight_decay=0.01 \
@@ -198,7 +202,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     +actor_rollout_ref.actor.baseline=$baseline \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
-    +actor_rollout_ref.rollout.use_cache=False \
+    +actor_rollout_ref.rollout.use_cache=True \
     +actor_rollout_ref.rollout.dual_cache=False \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.rollout.n=$n_rollout \
@@ -206,7 +210,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     actor_rollout_ref.rollout.do_sample=True \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
-    actor_rollout_ref.rollout.val_kwargs.temperature=0.0 \
+    actor_rollout_ref.rollout.val_kwargs.temperature=0.2 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
     +actor_rollout_ref.rollout.val_kwargs.num_diffusion_steps=$val_num_diffusion_steps \
     actor_rollout_ref.rollout.max_num_batched_tokens=11000 \

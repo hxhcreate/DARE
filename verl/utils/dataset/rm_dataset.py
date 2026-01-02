@@ -1,4 +1,5 @@
 # Copyright 2024 Bytedance Ltd. and/or its affiliates
+# Copyright 2025 Shanghai AI Lab
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +22,7 @@ from torch.utils.data import Dataset
 
 import verl.utils.torch_functional as verl_F
 from verl.utils import hf_tokenizer
+from omegaconf import ListConfig
 
 
 def download_files_distributed(download_fn):
@@ -49,7 +51,7 @@ class RMDataset(Dataset):
         add_eos=True,
         cache_dir="~/.cache/verl/rm",
     ):
-        if not isinstance(parquet_files, List):
+        if not isinstance(parquet_files, (List, ListConfig)):
             parquet_files = [parquet_files]
 
         self.parquet_files = parquet_files
@@ -158,7 +160,7 @@ class dLLMRMDataset(Dataset):
         cache_dir="~/.cache/verl/rm",
         truncation="error",
     ):
-        if not isinstance(parquet_files, List):
+        if not isinstance(parquet_files, (List, ListConfig)):
             parquet_files = [parquet_files]
 
         self.parquet_files = parquet_files
@@ -193,6 +195,13 @@ class dLLMRMDataset(Dataset):
                     self.parquet_files[i] = dst
 
         download_files_distributed(_download_files)
+
+    # def _download(self, use_origin_parquet=False):
+    #     from verl.utils.fs import copy_to_local
+
+    #     data_files = self.data_files if not use_origin_parquet else self.original_data_files
+    #     for i, parquet_file in enumerate(data_files):
+    #         self.data_files[i] = copy_to_local(src=parquet_file, cache_dir=self.cache_dir, use_shm=self.use_shm)
 
     def _read_files_and_tokenize(self):
         dataframes = []

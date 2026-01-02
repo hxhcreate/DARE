@@ -381,7 +381,9 @@ def _forward_process_coupled_grpo(batch, attention_mask, prompt_len, seed=42, MA
     """
     set_seed(seed)
     b, l = batch.shape  # (batch_size, seq_len)
-    prompt_index = attention_mask[:prompt_len].bool().unsqueeze(0).repeat(b, 1)  # (batch_size, prompt_len)
+    prompt_index = attention_mask.clone().bool()  # (seq_len,)
+    prompt_index[prompt_len:] = False
+    prompt_index = prompt_index.unsqueeze(0).repeat(b, 1)  # (batch_size, prompt_len)
     noisy_batch = []
     mask_indices = []
     p_mask = []

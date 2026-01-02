@@ -11,6 +11,10 @@ export HF_HOME=
 export HF_HUB_OFFLINE=1
 export TORCHDYNAMO_DISABLE=1
 
+echo "[INFO] Cleaning up old Ray..."
+ray stop --force || true
+rm -rf /tmp/ray || true
+
 # arguments parsing
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -136,7 +140,7 @@ batch_size=16  # batch_size must be greater than the number of GPUs used
 n_rollout=8
 lr=5e-7
 ppo_micro_batch_size_per_gpu=1  # gradient accumulation = batch_size / ppo_micro_batch_size_per_gpu
-train_temperature=0.6
+train_temperature=0.2
 algorithm="bgpo"
 
 # diffusion related parameters
@@ -222,7 +226,7 @@ python3 -m verl.trainer.dllm_main_ppo \
     trainer.logger=["console","wandb"] \
     trainer.project_name=$project_name \
     trainer.experiment_name=$exp_name \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.n_gpus_per_node=$n_gpus_per_node \
     trainer.nnodes=1 \
     trainer.default_local_dir=$ckpt_dir \

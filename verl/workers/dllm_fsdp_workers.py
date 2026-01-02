@@ -148,6 +148,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():
                 actor_module_class = AutoModelForVision2Seq
             else:
+                # actor_module_class = AutoModelForCausalLM # AutoModel
                 model_name = self.config.model.name
                 if model_name in ["sdar"]:
                     actor_module_class = AutoModelForCausalLM
@@ -206,7 +207,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     'lora_alpha': self.config.model.lora_alpha,
                     'target_modules': convert_to_regular_types(self.config.model.target_modules),
                     'bias': "none",
-                    'lora_dropout': self.config.model.lora_dropout,  # LNY: add dropout
+                    # 'lora_dropout': self.config.model.lora_dropout,  # LNY: add dropout
                 }
                 actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))
                 actor_module.print_trainable_parameters()
@@ -377,7 +378,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     rollout = FASTDLLMRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
                     rollout_sharding_manager = BaseShardingManager()
                     # TODO: a sharding manager that do nothing?
-
+            
         elif rollout_name == "vllm":    # !!! We have not yet adapted dLLM to vllm !!!
             from verl.workers.rollout.vllm_rollout import vllm_mode, vLLMRollout
             from verl.workers.sharding_manager.fsdp_vllm import FSDPVLLMShardingManager
@@ -466,29 +467,31 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After building sharding manager", logger=logger)
 
         elif rollout_name == "lmdeploy":
-            from verl.workers.rollout.lmdeploy_rollout import LMDeployRollout
-            from verl.workers.sharding_manager.fsdp_lmdeploy import FSDPLMDeployhardingManager
+            assert self.config.model.name == 'sdar', "lmdeploy rollout only supports sdar model currently"
+            from verl.workers.rollout.lmdeploy_rollout.lmdeploy_rollout_server import LMDeployRollout
+            from verl.workers.sharding_manager.fsdp_lmdeploy_server import FSDPLMDeployShardingManager
 
             log_gpu_memory_usage(f"Before building {rollout_name} rollout", logger=logger)
             local_path = copy_to_local(self.config.model.path, use_shm=self.config.model.get('use_shm', False))
+            print(f"Initializing lmdeploy engine with model_path={local_path}")
             lora_kwargs = {'lora_kwargs': {"enable_lora":True, "max_loras":1, "max_lora_rank":self._lora_rank}} if self._is_lora else {}
             rollout = LMDeployRollout(
-                actor_module=local_path,
+                model_path=local_path,
                 config=self.config.rollout,
                 tokenizer=self.tokenizer,
+                device_mesh=rollout_device_mesh,
                 **lora_kwargs)
-        
+
             log_gpu_memory_usage(f"After building {rollout_name} rollout", logger=logger)
             full_params = torch.distributed.get_world_size() == 1
-            rollout_sharding_manager = FSDPLMDeployhardingManager(
+            rollout_sharding_manager = FSDPLMDeployShardingManager(
                 module=self.actor_module_fsdp,
-                inference_engine=rollout.inference_engine,
+                # engine=rollout.engine,
+                # engine_instance=rollout.engine_instance,
                 model_config=self.actor_model_config,
                 full_params=full_params,
                 device_mesh=rollout_device_mesh,
                 offload_param=self._is_offload_param,
-                load_format=self.config.rollout.load_format,
-                layered_summon=self.config.rollout.get('layered_summon', False),
             )
             log_gpu_memory_usage("After building sharding manager", logger=logger)
 
@@ -511,6 +514,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                 from verl.workers.actor.llada_dp_actor_vrpo import DLLMDataParallelPPOActor
             else:
                 raise NotImplementedError
+            
         elif self.config.model.name == 'dream':
             if self.config.algorithm.name == 'spg':
                 from verl.workers.actor.dream_dp_actor_spg import DLLMDataParallelPPOActor
@@ -523,8 +527,13 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             elif self.config.algorithm.name == 'd1':
                 from verl.workers.actor.dream_dp_actor_d1 import DLLMDataParallelPPOActor
             elif self.config.algorithm.name == 'vrpo':
-                # TODO: implement dream vrpo actor
                 from verl.workers.actor.dream_dp_actor_vrpo import DLLMDataParallelPPOActor
+            else:
+                raise NotImplementedError
+            
+        elif self.config.model.name == 'sdar':
+            if self.config.algorithm.name == 'bgpo':
+                from verl.workers.actor.sdar_dp_actor_bgpo import DLLMDataParallelPPOActor
             else:
                 raise NotImplementedError
         # This is used to import external_lib into the huggingface systems
@@ -674,6 +683,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             "pad_token_id": self.generation_config.pad_token_id if self.generation_config is not None else self.tokenizer.pad_token_id,
         }
         prompts.meta_info.update(meta_info)
+
         with self.rollout_sharding_manager:
             log_gpu_memory_usage("After entering rollout sharding manager", logger=logger)
 
@@ -683,7 +693,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After rollout generation", logger=logger)
 
             output = self.rollout_sharding_manager.postprocess_data(output)
-
+            
         output = output.to("cpu")
 
         # clear kv cache
@@ -703,7 +713,6 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         """
         batch = prompts.batch
         # Extract data from batch
-        
         if self.config.algorithm.name in ["vrpo"]:
             batch = TensorDict()
             response_length = prompts.meta_info["response_length"]
@@ -718,8 +727,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         input_ids = batch["input_ids"]  # (batch_size * n_rollout, seq_len)
         attention_mask = batch["attention_mask"]  # (batch_size * n_rollout, seq_len)
         position_ids = batch["position_ids"]  # Complete position_ids, prompt is left-padded, response is right-padded
+        # response_length = self.config.rollout.get("response_length")
         total_batch_size  = input_ids.shape[0]
-        
+    
         if self.config.algorithm.name not in ["vrpo"]:
             response_length = self.config.rollout.get("response_length")
 
@@ -741,7 +751,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             elif self.config.algorithm.name == "vrpo":
                 assert n_l == mc_num, "vrpo allocates the full budget to timesteps, requires n_l == mc_num"
                 from verl.trainer.ppo.dllm_core_algos import _forward_process_vrpo as _forward_process
-            
+
             batch_size, seq_len = input_ids.shape
             prompt_len = seq_len - response_length  # int
             device = input_ids.device
@@ -784,7 +794,7 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             batch_size, seq_len = input_ids.shape
             prompt_len = seq_len - response_length  # int
             device = input_ids.device
-            n_y_l = mc_num // n_l  # mc_num: Monte Carlo sampling times
+            num_iterations = self.config.actor.get("num_iterations", 1)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):            
                 # Generate perturbed_seq, mask_indices, p_mask for each sample in the batch
@@ -799,21 +809,23 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
                     mc_mask_indices_list = []
                     mc_p_mask_list = []
 
-                    for j in range(n_y_l):
-                        perturbed_seq, mask_indices, p_mask = _forward_process(batch=single_input_id, attention_mask=attention_mask[i],  prompt_len=prompt_len, block_length=block_length, num_t=n_l, MASK_TOKEN_ID=MASK_TOKEN_ID)  # (n_l, seq_len)
+                    for j in range(num_iterations):
+                        perturbed_seq, mask_indices, p_mask = _forward_process(batch=single_input_id, attention_mask=attention_mask[i],  prompt_len=prompt_len, block_length=block_length, num_t=mc_num, MASK_TOKEN_ID=MASK_TOKEN_ID)  # (mc_num, seq_len)
                         assert (mask_indices == (perturbed_seq == MASK_TOKEN_ID)).all()
 
                         mc_perturbed_seq_list.append(perturbed_seq)
                         mc_mask_indices_list.append(mask_indices)
                         mc_p_mask_list.append(p_mask)
+                        
 
-                    all_perturbed_seqs.append(torch.cat(mc_perturbed_seq_list, dim=0))  # (mc_num, seq_len)
-                    all_mask_indices.append(torch.cat(mc_mask_indices_list, dim=0))  # (mc_num, seq_len)
-                    all_p_mask.append(torch.cat(mc_p_mask_list, dim=0))  # (mc_num, seq_len)
+                    all_perturbed_seqs.append(torch.stack(mc_perturbed_seq_list, dim=0))  # (num_iterations, mc_num, seq_len)
+                    all_mask_indices.append(torch.stack(mc_mask_indices_list, dim=0))  # (num_iterations, mc_num, seq_len)
+                    all_p_mask.append(torch.stack(mc_p_mask_list, dim=0))  # (num_iterations, mc_num, seq_len)
 
-                perturbed_seq = torch.stack(all_perturbed_seqs, dim=0)  # (batch_size, mc_num, seq_len)
-                mask_indices = torch.stack(all_mask_indices, dim=0)  # (batch_size, mc_num, seq_len)
-                p_mask = torch.stack(all_p_mask, dim=0)  # (batch_size, mc_num, seq_len)
+                # [num_iterations * batch_size, num_t, seq_len]
+                perturbed_seq = torch.stack(all_perturbed_seqs, dim=0)  # (batch_size, num_iterations, mc_num, seq_len)
+                mask_indices = torch.stack(all_mask_indices, dim=0)  # (batch_size, num_iterations,  mc_num, seq_len)
+                p_mask = torch.stack(all_p_mask, dim=0)  # (batch_size, num_iterations, mc_num, seq_len)
         
         else:
             NotImplementedError(f"Unsupported algorithm: {self.config.algorithm.name} for forward process in DLLMActorRolloutRefWorker")
@@ -855,9 +867,9 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
-                output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
+                entropys, log_probs, loss_per_sample = self.actor.compute_log_prob(data=data, calculate_entropy=True)  # (batch_size, steps, seq_length)
             output = DataProto.from_dict(
-                tensors={"old_log_probs": output, "entropys": entropys},
+                tensors={"old_log_probs": log_probs, "old_loss_per_sample": loss_per_sample, "old_entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
             output = self.ulysses_sharding_manager.postprocess_data(output)
@@ -874,7 +886,42 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After offload actor model during compute_log_prob", logger=logger)
 
         return output
-    
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def compute_ref_log_prob(self, data: DataProto):
+        if self._is_lora:
+            # if _is_lora, actor without lora applied is the ref
+            data.meta_info['is_lora'] = True
+            data = self.compute_log_prob(data)
+            # this old_log_probs is in fact ref_log_prob
+            data = DataProto.from_dict(tensors={'ref_log_probs': data.batch['old_log_probs']})
+            return data
+        assert self._is_ref
+        # else:
+        # otherwise, the class have a standalone ref model
+        # Support all hardwares
+        data = data.to(get_torch_device().current_device())
+
+        micro_batch_size = self.config.ref.log_prob_micro_batch_size_per_gpu
+        data.meta_info["micro_batch_size"] = micro_batch_size
+        data.meta_info["temperature"] = self.config.rollout.temperature
+        data.meta_info["max_token_len"] = self.config.ref.log_prob_max_token_len_per_gpu
+        data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
+        with self.ulysses_sharding_manager:
+            data = self.ulysses_sharding_manager.preprocess_data(data)
+            entropys, log_probs, loss_per_sample = self.ref_policy.compute_log_prob(data=data, calculate_entropy=True)
+            output = DataProto.from_dict(tensors={"ref_log_probs": log_probs, "ref_loss_per_sample": loss_per_sample, "ref_entropys": entropys})
+            output = self.ulysses_sharding_manager.postprocess_data(output)
+
+        output = output.to("cpu")
+
+        # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
+        # unshard the root FSDP module
+        if self.world_size > 1 and fsdp_version(self.ref_policy.actor_module) == 1:
+            self.ref_policy.actor_module._handle.reshard(True)
+
+        return output
+
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_policy_loss_for_validation(self, data: DataProto):
         assert self._is_actor
@@ -897,3 +944,47 @@ class DLLMActorRolloutRefWorker(ActorRolloutRefWorker):
             log_gpu_memory_usage("After offload actor model during update_actor", logger=logger)
 
         return output
+
+
+    @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+    def save_checkpoint(self, local_path, hdfs_path=None, global_step=0, max_ckpt_to_keep=None):
+        # only support save and load ckpt for actor
+        assert self._is_actor
+
+        if self._is_offload_param:
+            load_fsdp_model_to_gpu(self.actor_module_fsdp)
+
+        if self.config.model.name == 'dream':
+            if not self.generation_config.do_sample:
+                self.generation_config.do_sample = True
+
+        self.checkpoint_manager.save_checkpoint(local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep)
+        dist.barrier()
+
+        if self._is_lora and isinstance(self.actor_module, PeftModel):
+            lora_save_path = os.path.join(local_path, "lora_adapter")
+            peft_config = {}
+            if dist.get_rank() == 0:
+                os.makedirs(lora_save_path, exist_ok=True)
+                peft_config = asdict(self.actor_module.peft_config.get('default', {}))
+                peft_config['task_type'] = peft_config['task_type'].value
+                peft_config['peft_type'] = peft_config['peft_type'].value
+                peft_config['target_modules'] = list(peft_config['target_modules'])
+            try:
+                if isinstance(self.actor_module_fsdp, FSDP):
+                    self.actor_module_fsdp = self.actor_module_fsdp.cuda()
+                    lora_params = layered_summon_lora_params(self.actor_module_fsdp)
+                    if dist.get_rank() == 0:
+                        save_file(lora_params, os.path.join(lora_save_path, "adapter_model.safetensors"))
+                        with open(os.path.join(lora_save_path, "adapter_config.json"), "w", encoding='utf-8') as f:
+                            json.dump(peft_config, f, ensure_ascii=False, indent=4)
+            except Exception as e:
+                if dist.get_rank() == 0:
+                    print(f"[rank-{self.rank}]: Save LoRA Adapter Error ({e})")
+
+            dist.barrier()
+            if dist.get_rank() == 0:
+                print(f"[rank-{self.rank}]: Saved LoRA adapter to: {lora_save_path}")
+
+        if self._is_offload_param:
+            offload_fsdp_model_to_cpu(self.actor_module_fsdp)

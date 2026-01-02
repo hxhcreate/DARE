@@ -50,10 +50,7 @@ class Tracking:
 
         if "tracking" in default_backend or "wandb" in default_backend:
             import wandb
-            # import swanlab  # LNY
-            # swanlab.login(api_key="FNtsicZ1eoNFfKe4npgJJ")
-            # swanlab.sync_wandb()
-            
+
             wandb.init(project=project_name, name=experiment_name, config=config)
             self.logger["wandb"] = wandb
 

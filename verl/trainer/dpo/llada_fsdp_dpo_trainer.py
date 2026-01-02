@@ -14,6 +14,7 @@
 
 from verl.trainer.ppo.ray_trainer import *
 from verl.trainer.ppo.ray_trainer import _timer
+from verl.trainer.ppo.metric_utils import compute_dpo_data_metrics
 
 class DLLMRayDPOTrainer(RayPPOTrainer):
     """
@@ -124,7 +125,7 @@ class DLLMRayDPOTrainer(RayPPOTrainer):
         #    ppo_mini_batch_size is divisible by ppo_micro_batch_size
         #    ppo_micro_batch_size * sequence_parallel_size >= n_gpus
         if not config.actor_rollout_ref.actor.use_dynamic_bsz:
-            assert config.data.train_batch_size >= config.actor_rollout_ref.actor.ppo_mini_batch_size
+            assert config.data.train_batch_size * 2 >= config.actor_rollout_ref.actor.ppo_mini_batch_size
             sp_size = config.actor_rollout_ref.actor.get("ulysses_sequence_parallel_size", 1)
             if config.actor_rollout_ref.actor.ppo_micro_batch_size is not None:
                 assert config.actor_rollout_ref.actor.ppo_mini_batch_size % config.actor_rollout_ref.actor.ppo_micro_batch_size == 0
@@ -156,8 +157,8 @@ class DLLMRayDPOTrainer(RayPPOTrainer):
             forward_batch_output = self.actor_rollout_wg.forward_process(test_batch)
             test_batch = test_batch.union(forward_batch_output)    
                     
-            ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(test_batch)
-            test_batch = test_batch.union(ref_log_prob)                
+            ref_log_probs = self.ref_policy_wg.compute_ref_log_prob(test_batch)
+            test_batch = test_batch.union(ref_log_probs)                
             
             test_batch.meta_info["multi_turn"] = self.config.data.multiturn.enable
             val_output = self.actor_rollout_wg.compute_policy_loss_for_validation(test_batch)
@@ -301,8 +302,8 @@ class DLLMRayDPOTrainer(RayPPOTrainer):
                     batch = batch.union(forward_batch_output)    
                     
                     with _timer("ref", timing_raw):
-                        ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                        batch = batch.union(ref_log_prob)                
+                        ref_log_probs = self.ref_policy_wg.compute_ref_log_prob(batch)
+                        batch = batch.union(ref_log_probs)                
                     
                     # update actor
                     with _timer("update_actor", timing_raw):
@@ -331,8 +332,9 @@ class DLLMRayDPOTrainer(RayPPOTrainer):
                         "training/epoch": epoch,
                     }
                 )
+                
                 # collect metrics
-                metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                metrics.update(compute_dpo_data_metrics(batch=batch))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()

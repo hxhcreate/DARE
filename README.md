@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/DARE_logo.png" style="max-width:75%; height:auto;">
+  <img src="assets/DARE_logo.png" style="width:60%; height:auto;">
 </p>
 
 <div align="center">
@@ -17,17 +17,39 @@
 
 ## 🎯 Overview
 
-We introduce DARE (dLLM Alignment and Reinforcement Executor), a flexible and efficient supervised-finetuning (SFT) and reinforcement learning (RL) training framework designed specifically for diffusion large language models (dLLMs). DARE also integrates a comprehensive evaluation platform.
-
-DARE aims to be both flexible and user-friendly to use with:
+We introduce **DARE** (**d**LLM **A**lignment and **R**einforcement **E**xecutor), a flexible and efficient supervised-finetuning (SFT) and reinforcement learning (RL) training framework designed specifically for diffusion large language models (dLLMs). DARE also integrates dLLMs into a comprehensive evaluation platform. It aims to be both flexible and user-friendly to use with:
 - Easy extension of diverse RL algorithms for dLLMs
-- Easy extension of comprehensive benchmark evaluations for dLLMs
-- Seamless integration of existing and upcoming dLLM infras with modular APIs, ensuring compatibility and ease of use
-- Ready integration with popular HuggingFace dLLMs
+- Easy extension of extra benchmark evaluations for dLLMs
+- Easy integration of popular and upcoming dLLM infras and HuggingFace weights
+
+DARE is a work in progress, we plan to support more models and algorithm for training and evaluation. **We warmly welcome the research community to collaborations, give feedback and share suggestions.** Let's advance the diffusion large language models together !!!👊
+
+**Optimization Plan in RL Pipeline**
+> [!TIP]
+> For MDLMs (LLaDA or Dream), we decouple the attention backend used during training from that used during rollout. Rollout uses `flash_attn_func` or `flash_attn_with_kvcache` for KV-cache, training adopts `flash_attn_varlen_func` to skip meaningless computation on padding tokens. The entire pipeline speed-up approximately ⚡️ **4×**.
+
+<p align="center">
+  <img src="assets/optimization_plan_mdlm.png" style="width:85%; height:auto;">
+</p>
+
+> [!TIP]
+> For BDLMs like SDAR: We rollout with compatible lmdeploy inference and adopt SDAR's logits-free `fused_linear_cross_entropy` to cut memory usage, enable online weights update for rollout policy. The entire pipeline will be accelerated more than ⚡️ **14×**.
+
+<p align="center">
+  <img src="assets/optimization_plan_bdlm.png" style="width:85%; height:auto;">
+</p>
 
 
 ## 📢 News
-- [2025-12-01]: We open-sourced our codebase of DARE, including training and evaluation with faster inference for dLLM. **DARE is still work in progress, we warmly welcome the research community in this direction for their collaborations, feedback and suggestions. Let's make diffusion large language model great!!!👊**
+- [2025-12-28]: **Important**❗️ Several errors/bugs/updates in dp_actor_algorithm have been fixed/adapted. If you encounter issues before updating, pull repo after the timestamp 12-28 first.
+- [2025-12-24]: Support online rl (online weight update of rollout) for SDAR.
+- [2025-12-23]: Support vrpo (preference optimization) for Dream.
+- [2025-12-16]: Support vrpo (preference optimization) for LLaDA.
+- [2025-12-12]: Support sft/peft of SDAR.
+- [2025-12-11]: Support evaluation of LLaDAMoE and LLaDA2.0-mini.
+- [2025-12-08]: Support coupled-grpo, cj-grpo and spg algorithm.
+- [2025-12-03]: Support sequence parallel to enable longer generation ability for dLLMs.
+- [2025-12-01]: We initialize the codebase of DARE (dLLM Alignment and Reinforcement Executor), including faster sft/peft/rl (d1, bgpo) training (LLaDA/Dream) and evaluation (LLaDA/Dream/SDAR).
 
 
 ## 🔍 Catalogue
@@ -48,31 +70,35 @@ DARE aims to be both flexible and user-friendly to use with:
 ## 🏆 Key Features
 
 - **Acceleration Inference/Rollout for dLLMs**
-  - Block cache ([Fast-dLLM](https://github.com/NVlabs/Fast-dLLM)) for LLaDAs and Dreams faster rollout
+  - Block cache ([Fast-dLLM](https://github.com/NVlabs/Fast-dLLM)) for LLaDAs and Dreams 2.2x faster rollout
   - Inference engine ([lmdeploy](https://github.com/InternLM/lmdeploy)) for SDARs 2-4× faster rollout
 - **Parallelism for dLLMs**
-  - Support flash_attn
-  - Support flash_attn_varlen
-  - Support flash_attn_with_kvcache
-  - Support sequence_parallel
-- **Comprehensive Evaluation for dLLMs**
-  - Integrate [opencompass](https://github.com/open-compass/opencompass) framework with faster inference
+  - Support sequence parallel
+- **Attention Backend**
+  - Support flash_attn backend
+  - Support flash_attn_varlen backend
+  - Support flash_attn_with_kvcache backend
 - **Model Diversity**
   - dLLM that trained from scratch (e.g., LLaDA)
   - dLLM that continuous trained from AR, i.e., AR-to-Diffusion (e.g., Dream, SDAR)
+  - Masked diffusion language models (e.g., LLaDA/Dream), block diffusion language model (e.g., SDAR)
+- **Comprehensive Evaluation for dLLMs**
+  - Integrate  faster dLLM evaluation in [opencompass](https://github.com/open-compass/opencompass)
 - **Upcoming Features**
-  - Support [sglang](https://github.com/sgl-project/sglang) inference engine, Multi-Modal, etc.
+  - Support [sglang](https://github.com/sgl-project/sglang) inference engine, MoE, Multi-Modal, Omni, etc.
 
 
 ## 🛠️ Installation and Setup
 
 Our training framework is built on top of [verl](https://github.com/volcengine/verl), providing a robust foundation for supervised finetuning and reinforcement learning experiments, and our evaluation framework is built on the top of [opencompass](https://github.com/open-compass/opencompass), providing a comprehensive and fast evaluations.
 
-⚠️ *Note*: Due to some **irreconcilable dependency conflicts** between packages, we **strongly recommend using two separate virtual environments**, for training and evaluation, respectively.
+> [!NOTE]
+> Due to some **irreconcilable dependency conflicts** between packages, we **strongly recommend using two separate virtual environments**, for training and evaluation, respectively.
+
 
 ### 🚀 Quick Installation
 
-Clone the DARE Repo:
+Clone the DARE repo:
 ```bash
 git clone https://github.com/yjyddq/DARE
 ```
@@ -87,10 +113,11 @@ conda activate DARE
 # Install dependencies
 cd DARE
 pip install -r requirements.txt
-pip install flash-attn==2.7.4.post1 --no-build-isolation
-# or 
+pip install flash-attn==2.8.3 --no-build-isolation
+# or (Recommend)
 # install from whl
-# pip install flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# pip install flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 ```
 
 Build evaluation vitual environment:
@@ -139,6 +166,10 @@ cp <path_to_llada_model>/*.safetensors models/xxx/
 
 Also for Dream, SDAR, etc.
 
+> [!NOTE]
+> Since optimization plan in RL pipeline (various attention-computation backend), this step is indispensable.
+
+
 ### 🗄️ Dataset Setup
 
 Preprocessed datasets is under `data/preprocessed`. Please refer `verl.utils.preprocess` to organize datasets. 
@@ -146,7 +177,7 @@ Preprocessed datasets is under `data/preprocessed`. Please refer `verl.utils.pre
 
 ## 🏋️ Training
 
-### 🚀 Quick Start
+### 🚀 SFT Quick Start
 
 ```bash
 bash scripts/run_sft.sh # | scripts/run_sft_peft.sh
@@ -163,6 +194,31 @@ bash recipe/run_sft_dream_7b_instruct.sh
 
 # peft for sdar_8b_chat
 bash recipe/run_sft_peft_sdar_8b_chat.sh 
+```
+
+### 🚀 RL Quick Start
+
+```bash
+# online rl for llada_8b_instruct
+bash recipe/run_d1_llada_8b_instruct.sh --task math # use Fast-dLLM for rollout acceleration
+
+# online rl for dream_7b_instruct
+bash recipe/run_coupled_grpo_dream_7b_instruct.sh --task math # use Fast-dLLM for rollout acceleration
+
+# online rl for sdar_8b_chat
+bash recipe/run_bgpo_sdar_8b_chat.sh --task math # use lmdeploy engine for rollout acceleration
+```
+
+### 🚀 DPO/VRPO Quick Start
+
+Run an example for preference optimization. First download [argilla/ultrafeedback-binarized-preferences-cleaned](https://huggingface.co/datasets/argilla/ultrafeedback-binarized-preferences-cleaned), then run `scripts/preprocess_dpo_dataset.sh` to save `ultrafeedback.parquet` under `data/preprocessed/dpo/train` and `data/preprocessed/dpo/test`
+
+```bash
+# preference optimization for llada_8b_instruct
+bash recipe/run_vrpo_llada_8b_instruct.sh --task ultrafeedback
+
+# preference optimization for dream_7b_instruct
+bash recipe/run_vrpo_dream_7b_instruct.sh --task ultrafeedback
 ```
 
 
@@ -204,21 +260,15 @@ If you want to add more benchmarks, models, or custom datasets, please refer to 
 
 ## 📦 Supported Models
 
-DARE is still work in progress. We are considering supporting more models for training and evaluation as soon as possible.
-
 | Model | Params | Training Support | Evaluation Support | Inference Acceleration |
 |-------|------------|------------------|--------------------|-------------------------------|
 | **LLaDA-8B-Base** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **LLaDA-8B-Instruct** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **LLaDA-1.5** | 8B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
 | **Dream-7B-Instruct** | 7B | sft/rl | ✅ | hf [Fast-dLLM](https://github.com/NVlabs/Fast-dLLM) |
-| **SDAR-1.7B-Chat** | 1.7B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
-| **SDAR-4B-Chat** | 4B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
-| **SDAR-8B-Chat** | 8B | sft | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
-| **LLaDA-MoE** | 7BA1B | - | ✅ | - |
-| **LLaDA2.0-mini** | 16BA1B | - | ✅ | - |
-
-**TODO...**
+| **SDAR-1.7B-Chat** | 1.7B | sft/rl | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
+| **SDAR-4B-Chat** | 4B | sft/rl | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
+| **SDAR-8B-Chat** | 8B | sft/rl | ✅ | [lmdeploy](https://github.com/InternLM/lmdeploy) |
 
 
 ## 🌱 Supported RL Algorithms
@@ -228,39 +278,41 @@ DARE is still work in progress. We are considering supporting more models for tr
 | **d1** | [2504.12216](https://arxiv.org/pdf/2504.12216) | [dllm-reasoning/d1](https://github.com/dllm-reasoning/d1) |
 | **vrpo** | [2505.19223](https://arxiv.org/abs/2505.19223) | [ML-GSAI/LLaDA-1.5](https://github.com/ML-GSAI/LLaDA-1.5) (closed source) |
 | **coupled-grpo** | [2506.20639](https://arxiv.org/pdf/2506.20639) | [apple/ml-diffucoder](https://github.com/apple/ml-diffucoder) |
-| **mdpo** | [2508.13148](https://arxiv.org/pdf/2508.13148) | [autonomousvision/mdpo](https://github.com/autonomousvision/mdpo) |
+| **mdpo** (todo) | [2508.13148](https://arxiv.org/pdf/2508.13148) | [autonomousvision/mdpo](https://github.com/autonomousvision/mdpo) |
 | **cj-grpo** | [2509.23924](https://arxiv.org/pdf/2509.23924) | [yjyddq/EOSER-ASS-RL](https://github.com/yjyddq/EOSER-ASS-RL) |
 | **spg** | [2510.09541](https://arxiv.org/pdf/2510.09541) | [facebookresearch/SPG](https://github.com/facebookresearch/SPG) |
 | **bgpo** | [2510.11683](https://arxiv.org/pdf/2510.11683) | [THU-KEG/BGPO](https://github.com/THU-KEG/BGPO) |
 
-**TODO...**
-
 
 ## 📈 Performance
 
-**Baseline**
+**Evaluation Result Reproduction**
 
-| Bench\Model | LLaDA-8B-Instruct | LLaDA-8B-Instruct + Fast-dLLM | Dream-7B-Instruct | SDAR-8B-Chat | SDAR-8B-Chat + lmdeploy | LLaDA-Moe-7B-A1B-Instruct | LLaDA2.0-Mini |
-|-------|------------|------------------------|-------|------------|------------------------|------------------------|------------|
-| **MMLU** | 65.24 | 65.17 | 66.83 | 75.40 |  | | |
-| **MMLU-Pro** | 36.82 | 34.58 | 31.89 |  |  | | |
-| **Hellaswag** | 75.30 | 74.41 | 63.23 | 67.67 | 87.59 | | |
-| **ARC-C** | 87.80 | 87.80 | 81.36 | 69.83 | 86.78 | 69.83 | 83.73 |
-| **GSM8k** | 79.68 | 78.39 | 83.24 | 88.10 | 87.95 | | |
-| **MATH** | 41.08 | 40.58 | 48.02 | 48.10 | 52.80 | | |
-| **GPQA** | 30.81 | 31.82 | 26.77 | 28.28 | 36.36 | 34.85 | 34.34 |
-| **AIME24** | 0.83 | 2.08 | 0.83 | 8.75 | 6.67 | | |
-| **AIME25** | 0.42 | 0.00 | 0.00 | 10.00 | 6.67 | | |
-| **Olympiad** | 8.95 | 9.70 | 12.22 | 17.81 | 17.35 | | |
-| **HumanEval** | 46.34 | 43.29 | 78.05 | 73.17 |  | | |
-| **MBPP** | 38.80 | 20.00 | 56.40 | 53.80 | 55.40 |  | |
-
-**TODO...**
+| Bench\Model | LLaDA-8B-Instruct | LLaDA-8B-Instruct + Fast-dLLM | Dream-7B-Instruct | SDAR-8B-Chat | SDAR-8B-Chat + lmdeploy |
+|-------|------------|------------------------|-------|------------|------------------------|
+| **MMLU** | 65.24 | 65.17 | 66.83 | 75.40 | 75.40 |
+| **MMLU-Pro** | 36.82 | 34.58 | 31.89 | 52.07 | 52.07 |
+| **Hellaswag** | 75.30 | 74.41 | 63.23 | 67.67 | 87.59 |
+| **ARC-C** | 87.80 | 87.80 | 81.36 | 69.83 | 86.78 |
+| **GSM8k** | 79.68 | 78.39 | 83.24 | 88.10 | 87.95 |
+| **MATH** | 41.08 | 40.58 | 48.02 | 48.10 | 52.80 |
+| **GPQA** | 30.81 | 31.82 | 26.77 | 28.28 | 36.36 |
+| **AIME24** | 0.83 | 2.08 | 0.83 | 8.75 | 6.67 |
+| **AIME25** | 0.42 | 0.00 | 0.00 | 10.00 | 6.67 |
+| **Olympiad** | 8.95 | 9.70 | 12.22 | 17.81 | 17.35 |
+| **HumanEval** | 46.34 | 43.29 | 78.05 | 73.17 | 73.17 |
+| **MBPP** | 38.80 | 20.00 | 56.40 | 53.80 | 55.40 |
 
 
 ## 📧 Contact
 
-For any questions or collaboration inquiries, feel free to reach out Jingyi Yang at: [yangjingyi946@gmail.com](yangjingyi946@gmail.com)
+For any questions or collaboration inquiries, feel free to reach out Jingyi Yang at: [yangjingyi946@gmail.com](yangjingyi946@gmail.com).
+
+
+## 👷‍♂️ Contributor
+
+Waiting for your joining and contribution.
+
 
 
 ## 📚 Citation
