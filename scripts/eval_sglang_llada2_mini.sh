@@ -49,27 +49,27 @@ mkdir -p ${log_dir}
 case "${task}" in
   mmlu)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_mmlu.py
-    work_dir=outputs/llada2_mini_mmlu
+    work_dir=outputs/sglang_llada2_mini_mmlu
     ;;
   mmlupro)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_mmlupro.py
-    work_dir=outputs/llada2_mini_mmlupro
+    work_dir=outputs/sglang_llada2_mini_mmlupro
     ;;
   hellaswag)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_hellaswag.py
-    work_dir=outputs/llada2_mini_hellaswag
+    work_dir=outputs/sglang_llada2_mini_hellaswag
     ;;
   gpqa)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_gpqa.py
-    work_dir=outputs/llada2_mini_gpqa
+    work_dir=outputs/sglang_llada2_mini_gpqa
     ;;
   arcc)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_arcc.py
-    work_dir=outputs/llada2_mini_arcc
+    work_dir=outputs/sglang_llada2_mini_arcc
     ;;
   mbpp)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_mbpp.py
-    work_dir=outputs/llada2_mini_mbpp
+    work_dir=outputs/sglang_llada2_mini_mbpp
     ;;
   humaneval)
     py_script=sglang_llada2_mini_examples/sglang_llada2_mini_gen_humaneval.py
